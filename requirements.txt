@@ -1,0 +1,11 @@
+xarray
+zarr
+dask
+numcodecs
+rasterio
+rioxarray
+geopandas
+requests
+fastapi
+uvicorn
+pytest
