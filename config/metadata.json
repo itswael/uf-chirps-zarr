@@ -1,0 +1,19 @@
+{
+  "title": "CHIRPS Daily Precipitation Data",
+  "institution": "Climate Hazards Center, UC Santa Barbara",
+  "source": "CHIRPS version 2.0",
+  "references": "Funk et al. 2015, Scientific Data",
+  "comment": "Climate Hazards Group InfraRed Precipitation with Station data",
+  "Conventions": "CF-1.8",
+  "variable_attributes": {
+    "precipitation": {
+      "long_name": "Daily precipitation",
+      "units": "mm/day",
+      "standard_name": "precipitation_amount",
+      "grid_mapping": "crs"
+    }
+  },
+  "spatial_resolution": "0.05 degrees",
+  "temporal_resolution": "daily",
+  "coverage": "global: 50S-50N, all longitudes"
+}
