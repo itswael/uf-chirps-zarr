@@ -53,12 +53,12 @@ class TestConfigDefaults:
     def test_default_chirps_base_url(self):
         """Test that CHIRPS base URL has correct default value."""
         config = Config()
-        assert config.CHIRPS_BASE_URL == "https://data.chc.ucsb.edu/products/CHIRPS-2.0"
+        assert config.CHIRPS_BASE_URL == "https://data.chc.ucsb.edu/products/CHIRPS/v3.0"
     
     def test_default_data_source_url_pattern(self):
         """Test that URL pattern has correct default value."""
         config = Config()
-        expected = "{base_url}/global_daily/tifs/p05/{year}/chirps-v2.0.{year}.{month:02d}.{day:02d}.tif.gz"
+        expected = "{base_url}/daily/final/rnl/{year}/chirps-v3.0.rnl.{year}.{month:02d}.{day:02d}.tif"
         assert config.DATA_SOURCE_URL_PATTERN == expected
 
 
@@ -88,7 +88,7 @@ class TestConfigPaths:
     def test_zarr_store_path(self):
         """Test that ZARR_STORE_PATH is constructed correctly."""
         config = Config()
-        assert config.ZARR_STORE_PATH == config.ZARR_DIR / "chirps_daily"
+        assert config.ZARR_STORE_PATH == config.ZARR_DIR / "chirps_v3.0_daily_precip_v1.0.zarr"
     
     def test_metadata_config_path_is_path(self):
         """Test that METADATA_CONFIG_PATH returns a Path object."""
@@ -191,12 +191,12 @@ class TestURLConstruction:
     def test_get_chirps_url_format(self):
         """Test that get_chirps_url constructs valid URLs."""
         config = Config()
-        url = config.get_chirps_url(2020, 1, 15)
+        url = config.get_chirps_url(2025, 1, 15)
         
-        assert "2020" in url
+        assert "2025" in url
         assert "01" in url
         assert "15" in url
-        assert url.endswith(".tif.gz")
+        assert url.endswith(".tif")
     
     def test_get_chirps_url_contains_base(self):
         """Test that constructed URL contains base URL."""
