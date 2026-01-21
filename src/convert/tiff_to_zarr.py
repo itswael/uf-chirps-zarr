@@ -219,13 +219,16 @@ class TIFFToZarrConverter:
             # Apply metadata to dataset
             first_dataset.attrs.update(ds_metadata)
             
-            # Configure compression
-            compressor = Blosc(cname='zstd', clevel=self.config.ZARR_COMPRESSION_LEVEL, shuffle=Blosc.BITSHUFFLE)
-            
             # Define encoding with chunking and compression
+            # Note: Using dict format for compressor for compatibility with xarray/zarr
             encoding = {
                 'precipitation': {
-                    'compressor': compressor,
+                    'compressor': {
+                        'id': 'blosc',
+                        'cname': 'zstd',
+                        'clevel': self.config.ZARR_COMPRESSION_LEVEL,
+                        'shuffle': Blosc.BITSHUFFLE
+                    },
                     'chunks': (
                         self.config.ZARR_CHUNK_TIME,
                         self.config.ZARR_CHUNK_LAT,
@@ -324,16 +327,15 @@ class TIFFToZarrConverter:
                 current_time_size = existing_ds.sizes['time']
                 existing_ds.close()
                 
-                # Configure compression (must match initial configuration)
-                compressor = Blosc(
-                    cname='zstd',
-                    clevel=self.config.ZARR_COMPRESSION_LEVEL,
-                    shuffle=Blosc.BITSHUFFLE
-                )
-                
+                # Define encoding with compression (must match initial configuration)
                 encoding = {
                     'precipitation': {
-                        'compressor': compressor,
+                        'compressor': {
+                            'id': 'blosc',
+                            'cname': 'zstd',
+                            'clevel': self.config.ZARR_COMPRESSION_LEVEL,
+                            'shuffle': Blosc.BITSHUFFLE
+                        },
                         'chunks': (
                             self.config.ZARR_CHUNK_TIME,
                             self.config.ZARR_CHUNK_LAT,
