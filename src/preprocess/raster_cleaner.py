@@ -169,10 +169,18 @@ class RasterValidator:
                 try:
                     data = src.read(1)
                     
-                    # Check for all NaN or NoData
-                    valid_mask = data != src.nodata
+                    # Create mask for valid data (exclude NoData and NaN)
+                    valid_mask = np.ones(data.shape, dtype=bool)
+                    
+                    # Exclude NoData value if specified
                     if src.nodata is not None:
-                        valid_mask &= ~np.isnan(data)
+                        valid_mask &= (data != src.nodata)
+                    
+                    # Also exclude -9999.0 as it's commonly used as fill value in CHIRPS
+                    valid_mask &= (data != -9999.0)
+                    
+                    # Exclude NaN values
+                    valid_mask &= ~np.isnan(data)
                     
                     valid_count = np.sum(valid_mask)
                     total_count = data.size
@@ -193,7 +201,7 @@ class RasterValidator:
                         metadata["mean_value"] = float(np.mean(valid_data))
                         metadata["std_value"] = float(np.std(valid_data))
                         
-                        # Check for negative precipitation (except fill value)
+                        # Check for negative precipitation (should not exist in valid data)
                         negative_mask = valid_data < self.VALID_PRECIP_MIN
                         if np.any(negative_mask):
                             negative_count = np.sum(negative_mask)
