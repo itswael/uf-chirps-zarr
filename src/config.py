@@ -57,11 +57,11 @@ class Config:
         # CHIRPS data source configuration
         self._chirps_base_url = os.getenv(
             "CHIRPS_BASE_URL",
-            "https://data.chc.ucsb.edu/products/CHIRPS-2.0"
+            "https://data.chc.ucsb.edu/products/CHIRPS/v3.0"
         )
         self._data_source_url_pattern = os.getenv(
             "CHIRPS_URL_PATTERN",
-            "{base_url}/global_daily/tifs/p05/{year}/chirps-v2.0.{year}.{month:02d}.{day:02d}.tif.gz"
+            "{base_url}/daily/final/rnl/{year}/chirps-v3.0.rnl.{year}.{month:02d}.{day:02d}.tif"
         )
         
         # Network configuration
@@ -86,7 +86,20 @@ class Config:
         )
         
         # Zarr storage configuration
-        self._zarr_store_name = os.getenv("CHIRPS_ZARR_STORE_NAME", "chirps_daily")
+        self._zarr_store_name = os.getenv("CHIRPS_ZARR_STORE_NAME", "chirps_v3.0_daily_precip_v1.0.zarr")
+        
+        # Zarr chunking configuration (fixed and immutable)
+        self._zarr_chunk_time = int(os.getenv("CHIRPS_ZARR_CHUNK_TIME", "30"))
+        self._zarr_chunk_lat = int(os.getenv("CHIRPS_ZARR_CHUNK_LAT", "250"))
+        self._zarr_chunk_lon = int(os.getenv("CHIRPS_ZARR_CHUNK_LON", "250"))
+        
+        # Zarr compression configuration
+        self._zarr_compressor = os.getenv("CHIRPS_ZARR_COMPRESSOR", "blosc")
+        self._zarr_compression_level = int(os.getenv("CHIRPS_ZARR_COMPRESSION_LEVEL", "3"))
+        
+        # Data validation settings
+        self._precipitation_fill_value = float(os.getenv("CHIRPS_FILL_VALUE", "-99.0"))
+        self._precipitation_valid_min = float(os.getenv("CHIRPS_VALID_MIN", "0.0"))
         
         # Create required directories
         self._ensure_directories()
@@ -115,6 +128,41 @@ class Config:
     def ZARR_STORE_PATH(self) -> Path:
         """Full path to the primary Zarr store."""
         return self._zarr_dir / self._zarr_store_name
+    
+    @property
+    def ZARR_CHUNK_TIME(self) -> int:
+        """Zarr chunk size for time dimension."""
+        return self._zarr_chunk_time
+    
+    @property
+    def ZARR_CHUNK_LAT(self) -> int:
+        """Zarr chunk size for latitude dimension."""
+        return self._zarr_chunk_lat
+    
+    @property
+    def ZARR_CHUNK_LON(self) -> int:
+        """Zarr chunk size for longitude dimension."""
+        return self._zarr_chunk_lon
+    
+    @property
+    def ZARR_COMPRESSOR(self) -> str:
+        """Zarr compressor type."""
+        return self._zarr_compressor
+    
+    @property
+    def ZARR_COMPRESSION_LEVEL(self) -> int:
+        """Zarr compression level."""
+        return self._zarr_compression_level
+    
+    @property
+    def PRECIPITATION_FILL_VALUE(self) -> float:
+        """Fill value for precipitation data."""
+        return self._precipitation_fill_value
+    
+    @property
+    def PRECIPITATION_VALID_MIN(self) -> float:
+        """Minimum valid precipitation value."""
+        return self._precipitation_valid_min
     
     @property
     def DOWNLOAD_CONCURRENCY(self) -> int:
@@ -244,8 +292,8 @@ class Config:
             
         Example:
             >>> config = Config()
-            >>> config.get_chirps_url(2020, 1, 15)
-            'https://data.chc.ucsb.edu/products/CHIRPS-2.0/global_daily/tifs/p05/2020/chirps-v2.0.2020.01.15.tif.gz'
+            >>> config.get_chirps_url(2025, 1, 15)
+            'https://data.chc.ucsb.edu/products/CHIRPS/v3.0/daily/final/rnl/2025/chirps-v3.0.rnl.2025.01.15.tif'
         """
         return self._data_source_url_pattern.format(
             base_url=self._chirps_base_url,
