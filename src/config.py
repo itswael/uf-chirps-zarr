@@ -51,7 +51,7 @@ class Config:
         self._zarr_dir = self._base_dir / os.getenv("CHIRPS_ZARR_DIR", "data/zarr")
         
         # Download configuration
-        self._download_concurrency = int(os.getenv("CHIRPS_DOWNLOAD_CONCURRENCY", "4"))
+        self._download_concurrency = int(os.getenv("CHIRPS_DOWNLOAD_CONCURRENCY", "10"))
         self._chunk_size = int(os.getenv("CHIRPS_CHUNK_SIZE", str(8 * 1024 * 1024)))  # 8MB default
         
         # CHIRPS data source configuration
