@@ -219,16 +219,9 @@ class TIFFToZarrConverter:
             # Apply metadata to dataset
             first_dataset.attrs.update(ds_metadata)
             
-            # Define encoding with chunking and compression
-            # Note: Using dict format for compressor for compatibility with xarray/zarr
+            # Define encoding with chunking (compression handled by zarr defaults)
             encoding = {
                 'precipitation': {
-                    'compressor': {
-                        'id': 'blosc',
-                        'cname': 'zstd',
-                        'clevel': self.config.ZARR_COMPRESSION_LEVEL,
-                        'shuffle': Blosc.BITSHUFFLE
-                    },
                     'chunks': (
                         self.config.ZARR_CHUNK_TIME,
                         self.config.ZARR_CHUNK_LAT,
@@ -327,31 +320,19 @@ class TIFFToZarrConverter:
                 current_time_size = existing_ds.sizes['time']
                 existing_ds.close()
                 
-                # Define encoding with compression (must match initial configuration)
-                encoding = {
-                    'precipitation': {
-                        'compressor': {
-                            'id': 'blosc',
-                            'cname': 'zstd',
-                            'clevel': self.config.ZARR_COMPRESSION_LEVEL,
-                            'shuffle': Blosc.BITSHUFFLE
-                        },
-                        'chunks': (
-                            self.config.ZARR_CHUNK_TIME,
-                            self.config.ZARR_CHUNK_LAT,
-                            self.config.ZARR_CHUNK_LON
-                        ),
-                        '_FillValue': self.config.PRECIPITATION_FILL_VALUE,
-                        'dtype': 'float32'
-                    }
-                }
+                # Remove encoding-related attributes that may conflict
+                # xarray adds these during rioxarray operations
+                attrs_to_remove = ['add_offset', 'scale_factor', '_FillValue']
+                for var_name in dataset.data_vars:
+                    for attr in attrs_to_remove:
+                        if attr in dataset[var_name].attrs:
+                            del dataset[var_name].attrs[attr]
                 
-                # Append to Zarr
+                # Append to Zarr (no encoding needed - uses existing configuration)
                 dataset.to_zarr(
                     zarr_path,
                     mode='a',
                     append_dim='time',
-                    encoding=encoding,
                     consolidated=True
                 )
                 
