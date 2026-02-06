@@ -54,17 +54,24 @@ class IncrementalOrchestrator:
     def __init__(
         self,
         config: Optional[Config] = None,
-        max_days_per_run: int = 31
+        max_days_per_run: Optional[int] = None
     ):
         """
         Initialize the incremental orchestrator.
         
         Args:
             config: Application configuration (uses singleton if None)
-            max_days_per_run: Maximum number of days to ingest in one run (default: 31)
+            max_days_per_run: Maximum number of days to ingest in one run.
+                            None = unlimited (downloads up to today)
+                            Use config.INCREMENTAL_MAX_DAYS_PER_RUN if not specified
         """
         self.config = config or get_config()
-        self.max_days_per_run = max_days_per_run
+        # Use provided value, else config value, else None (unlimited)
+        self.max_days_per_run = (
+            max_days_per_run 
+            if max_days_per_run is not None 
+            else self.config.INCREMENTAL_MAX_DAYS_PER_RUN
+        )
         
         # Setup logging
         self.logger = setup_logger(
@@ -266,7 +273,7 @@ class IncrementalOrchestrator:
         
         Downloads consecutive days starting from start_date until:
         - Files are no longer available (404)
-        - max_days_per_run is reached
+        - max_days_per_run is reached (if set)
         - A download failure occurs
         
         Args:
@@ -275,16 +282,25 @@ class IncrementalOrchestrator:
         Returns:
             Tuple of (successful_files, failed_downloads, last_successful_date)
         """
+        # Calculate max days to download
+        if self.max_days_per_run is None:
+            # No limit - download up to today
+            today = date.today()
+            days_to_download = (today - start_date).days + 1
+            limit_description = f"up to today ({today})"
+        else:
+            days_to_download = self.max_days_per_run
+            limit_description = f"max {self.max_days_per_run} days"
+        
         self.logger.info(
-            f"Starting incremental download from {start_date}, "
-            f"max {self.max_days_per_run} days"
+            f"Starting incremental download from {start_date}, {limit_description}"
         )
         
         download_start = time.time()
         
         successful_files, failed_downloads, last_date = self.downloader.download_incremental(
             start_date=start_date,
-            max_consecutive_days=self.max_days_per_run,
+            max_consecutive_days=days_to_download,
             stop_on_missing=True  # Stop when file not available
         )
         
