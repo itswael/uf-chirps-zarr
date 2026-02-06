@@ -79,6 +79,12 @@ class Config:
             "%Y-%m-%d"
         ).date()
         
+        # Incremental ingestion configuration
+        # None = no limit (downloads all available data up to today)
+        # Set to positive integer to limit days per run
+        max_days_env = os.getenv("CHIRPS_INCREMENTAL_MAX_DAYS_PER_RUN")
+        self._incremental_max_days_per_run = int(max_days_env) if max_days_env else None
+        
         # Metadata configuration
         self._metadata_config_path = self._base_dir / os.getenv(
             "CHIRPS_METADATA_CONFIG",
@@ -208,6 +214,11 @@ class Config:
     def BOOTSTRAP_END_DATE(self) -> datetime.date:
         """End date for initial data ingestion."""
         return self._bootstrap_end_date
+    
+    @property
+    def INCREMENTAL_MAX_DAYS_PER_RUN(self) -> Optional[int]:
+        """Maximum days per incremental run (None = unlimited, up to today)."""
+        return self._incremental_max_days_per_run
     
     @property
     def METADATA_CONFIG_PATH(self) -> Path:

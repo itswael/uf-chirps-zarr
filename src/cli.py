@@ -10,7 +10,7 @@ Provides CLI commands for:
 
 import argparse
 import sys
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from src.config import get_config
@@ -119,7 +119,14 @@ def cmd_incremental(args):
     
     print(f"Current latest date: {latest_date}")
     print(f"Next expected date: {next_date}")
-    print(f"Max days per run: {args.max_days}")
+    
+    # Display max days setting
+    if args.max_days is None:
+        today = date.today()
+        days_behind = (today - next_date).days + 1 if today >= next_date else 0
+        print(f"Max days per run: unlimited (up to today, ~{days_behind} days)")
+    else:
+        print(f"Max days per run: {args.max_days}")
     
     if args.dry_run:
         print("MODE: DRY RUN (no changes will be made)")
@@ -313,8 +320,8 @@ Examples:
     auto_parser.add_argument(
         '--max-days',
         type=int,
-        default=31,
-        help='Maximum days to ingest per run (default: 31)'
+        default=None,
+        help='Maximum days to ingest per run (default: unlimited, up to today)'
     )
     auto_parser.add_argument(
         '--dry-run',
@@ -363,8 +370,8 @@ Examples:
     incremental_parser.add_argument(
         '--max-days',
         type=int,
-        default=31,
-        help='Maximum consecutive days to ingest (default: 31)'
+        default=None,
+        help='Maximum consecutive days to ingest (default: unlimited, up to today)'
     )
     incremental_parser.add_argument(
         '--force-date',
