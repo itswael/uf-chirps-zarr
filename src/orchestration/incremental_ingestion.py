@@ -411,7 +411,7 @@ class IncrementalOrchestrator:
                 
                 successful += 1
                 self.logger.info(
-                    f"✓ Successfully ingested {processing_date} "
+                    f"[OK] Successfully ingested {processing_date} "
                     f"({successful}/{len(downloaded_files)} processed)"
                 )
                 

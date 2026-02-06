@@ -178,7 +178,7 @@ class TIFFToZarrConverter:
             ds.attrs['crs'] = 'EPSG:4326'
             
             self.logger.debug(
-                f"Converted to Dataset: {tuple(ds.dims.items())}, "
+                f"Converted to Dataset: {tuple(ds.sizes.items())}, "
                 f"variables: {list(ds.data_vars)}"
             )
             
