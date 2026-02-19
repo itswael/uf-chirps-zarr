@@ -12,7 +12,20 @@ interface MapViewProps {
 export default function MapView({ onLocationSelect, selectedLocation }: MapViewProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const [mapInstance, setMapInstance] = useState<any>(null);
-  const [markerInstance, setMarkerInstance] = useState<any>(null);
+  const markerRef = useRef<any>(null);
+
+  useEffect(() => {
+    // Dynamically load Leaflet CSS
+    if (typeof window !== 'undefined' && !document.getElementById('leaflet-css')) {
+      const link = document.createElement('link');
+      link.id = 'leaflet-css';
+      link.rel = 'stylesheet';
+      link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+      link.integrity = 'sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=';
+      link.crossOrigin = '';
+      document.head.appendChild(link);
+    }
+  }, []);
 
   useEffect(() => {
     // Dynamic import of Leaflet to avoid SSR issues
@@ -21,9 +34,9 @@ export default function MapView({ onLocationSelect, selectedLocation }: MapViewP
         // Fix for default marker icon
         delete (L.Icon.Default.prototype as any)._getIconUrl;
         L.Icon.Default.mergeOptions({
-          iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
-          iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
-          shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+          iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+          iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+          shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
         });
 
         const map = L.map(mapRef.current!, {
@@ -33,8 +46,10 @@ export default function MapView({ onLocationSelect, selectedLocation }: MapViewP
           maxZoom: appConfig.map.maxZoom,
         });
 
-        L.tileLayer(appConfig.map.tileLayer.url, {
-          attribution: appConfig.map.tileLayer.attribution,
+        // Use a more reliable tile provider
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+          maxZoom: 19,
         }).addTo(map);
 
         // Add click handler
@@ -60,9 +75,10 @@ export default function MapView({ onLocationSelect, selectedLocation }: MapViewP
   useEffect(() => {
     if (mapInstance && selectedLocation) {
       import('leaflet').then((L) => {
-        // Remove existing marker
-        if (markerInstance) {
-          markerInstance.remove();
+        // Remove existing marker if it exists
+        if (markerRef.current) {
+          markerRef.current.remove();
+          markerRef.current = null;
         }
 
         // Add new marker
@@ -75,7 +91,7 @@ export default function MapView({ onLocationSelect, selectedLocation }: MapViewP
           )
           .openPopup();
 
-        setMarkerInstance(marker);
+        markerRef.current = marker;
 
         // Pan to location
         mapInstance.setView([selectedLocation.lat, selectedLocation.lon], mapInstance.getZoom());
