@@ -215,7 +215,7 @@ def example_single_point():
             longitude=longitude,
             start_date=start_date,
             end_date=end_date,
-            method='nearest'  # Use nearest grid point
+            method='interp'  # 'interp' or 'nearest'  # Use nearest grid point
         )
         
         # Display results
@@ -296,10 +296,10 @@ def custom_query():
     # ========================================================================
     # CONFIGURE YOUR PARAMETERS HERE
     # ========================================================================
-    latitude = 42.0
-    longitude = -93.5
-    start_date = "2025-01-01"
-    end_date = "2025-01-31"
+    latitude = -4.7407
+    longitude = 29.9569
+    start_date = "2024-01-01"
+    end_date = "2024-01-31"
     method = 'nearest'  # 'nearest' or 'interp'
     # ========================================================================
     

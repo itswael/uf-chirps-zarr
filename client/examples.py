@@ -245,7 +245,7 @@ def example_8_data_validation():
             print(f"   Reasonable max: {results['reasonable_max']}")
             print(f"   Valid pixels: {results['valid_percent']:.1f}%")
             print(f"   Mean value: {results['mean_value']:.2f} mm/day")
-            print(f"   ✓ PASSED" if results['all_passed'] else "   ✗ FAILED")
+            print(f"   [PASS]" if results['all_passed'] else "   [FAIL]")
 
 
 def main():
@@ -255,12 +255,12 @@ def main():
     print("="*80)
     
     try:
-        # example_1_basic_access()
+        example_1_basic_access()
         # example_2_spatial_subsetting()
         # example_3_temporal_aggregation()
         # example_4_parallel_access()
         # example_5_async_access()
-        example_6_multi_region_analysis()
+        # example_6_multi_region_analysis()
         # example_7_performance_benchmark()
         # example_8_data_validation()
         
@@ -269,10 +269,10 @@ def main():
         print("="*80 + "\n")
         
     except FileNotFoundError as e:
-        print(f"\n✗ Error: {e}")
+        print(f"\n[ERROR] {e}")
         print("Make sure the Zarr store exists and bootstrap ingestion has completed.")
     except Exception as e:
-        print(f"\n✗ Unexpected error: {e}")
+        print(f"\n[ERROR] Unexpected error: {e}")
         import traceback
         traceback.print_exc()
 
