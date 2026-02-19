@@ -275,8 +275,8 @@ async def download_icasa(
         # Write daily data in ICASA format (DDDYYYY) - exact values from Zarr
         for time_val, precip_val in zip(precip.time.values, precip.values):
             dt = datetime.fromisoformat(str(time_val)[:10])
-            # Format: DDDYYYY (day of year + year)
-            date_str = dt.strftime("%j%Y")
+            # Format: YYYYDDDD (year +day of year)
+            date_str = dt.strftime("%Y%j")
             # Use exact value from Zarr, only format for display (1 decimal)
             precip_formatted = f"{float(precip_val):.1f}" if not np.isnan(precip_val) else "0.0"
             output.write(f"{date_str}    {precip_formatted}\n")
