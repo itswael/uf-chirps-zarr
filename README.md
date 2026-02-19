@@ -11,6 +11,7 @@ A production-grade climate data platform for ingesting CHIRPS precipitation rast
 - **Zarr Conversion**: Convert TIFF files to efficient Zarr format with chunking
 - **State Tracking**: Monitor coverage, detect gaps, track latest ingested date
 - **Query Support**: Fast spatial and temporal queries on multi-year datasets
+- **Email Notifications**: Execution summaries sent to configured recipients
 - **Scalable**: Handles TB-level data volumes with Dask
 
 ## Quick Start
@@ -99,7 +100,8 @@ src/
 │   └── incremental_ingestion.py       # Incremental workflow orchestrator
 └── utils/
     ├── logging.py                      # Logging utilities
-    └── zarr_state.py                   # Zarr store state management
+    ├── zarr_state.py                   # Zarr store state management
+    └── email_notifier.py               # Email notification module
 
 data/
 ├── raw/                               # Downloaded TIFF files
@@ -107,7 +109,8 @@ data/
 └── zarr/                              # Zarr stores
 
 config/
-└── metadata.json                      # Zarr metadata configuration
+├── metadata.json                      # Zarr metadata configuration
+└── email_recipients.txt               # Email notification recipients
 
 documentation/
 ├── INCREMENTAL_GUIDE.md               # Comprehensive incremental guide
@@ -168,6 +171,82 @@ All configuration is centralized in `src/config.py`. Settings can be overridden 
 | `CHIRPS_BOOTSTRAP_START_DATE` | `2020-01-01` | Initial ingest start |
 | `CHIRPS_BOOTSTRAP_END_DATE` | `2020-12-31` | Initial ingest end |
 | `CHIRPS_METADATA_CONFIG` | `config/metadata.json` | Metadata config path |
+| `CHIRPS_EMAIL_ENABLED` | `false` | Enable email notifications |
+| `CHIRPS_SMTP_HOST` | `smtp.gmail.com` | SMTP server host |
+| `CHIRPS_SMTP_PORT` | `587` | SMTP server port |
+| `CHIRPS_SMTP_USE_TLS` | `true` | Use TLS for SMTP |
+| `CHIRPS_SMTP_USERNAME` | - | SMTP authentication username |
+| `CHIRPS_SMTP_PASSWORD` | - | SMTP authentication password |
+| `CHIRPS_EMAIL_FROM` | - | Email sender address |
+| `CHIRPS_EMAIL_RECIPIENTS_FILE` | `config/email_recipients.txt` | Recipients file path |
+
+## Email Notifications
+
+The platform can send email notifications with execution summaries for both bootstrap and incremental ingestion processes.
+
+### Setup
+
+1. **Copy the example environment file:**
+   ```bash
+   cp .env.example .env
+   ```
+
+2. **Configure SMTP settings in `.env`:**
+   ```bash
+   CHIRPS_EMAIL_ENABLED=true
+   CHIRPS_SMTP_HOST=smtp.gmail.com
+   CHIRPS_SMTP_PORT=587
+   CHIRPS_SMTP_USERNAME=your-email@example.com
+   CHIRPS_SMTP_PASSWORD=your-app-password
+   CHIRPS_EMAIL_FROM=your-email@example.com
+   ```
+
+3. **Configure recipients in `config/email_recipients.txt`:**
+   ```
+   admin@example.com
+   team@example.com
+   monitoring@example.com
+   ```
+
+### Gmail Configuration
+
+For Gmail accounts, you need to use an **App Password** instead of your regular password:
+
+1. Enable 2-Factor Authentication on your Google account
+2. Go to: https://myaccount.google.com/apppasswords
+3. Generate an app password for "Mail"
+4. Use this app password in `CHIRPS_SMTP_PASSWORD`
+
+### Notification Content
+
+Email notifications include:
+
+**Bootstrap Notifications:**
+- Execution start/end times and duration
+- Date range processed
+- Files processed and failed counts
+- Final Zarr store size
+- Error messages (if any)
+
+**Incremental Notifications:**
+- Execution start/end times and duration  
+- Dates checked and new files found
+- Files ingested and failed counts
+- Data gaps detected (if any)
+- Next expected date for updates
+- Error messages (if any)
+
+### Testing
+
+Test your email configuration:
+
+```bash
+# Run a quick bootstrap or incremental and check for email
+python -m src.cli status  # Check if email is enabled
+
+# Run incremental in dry-run mode (won't modify data)
+python -m src.cli incremental --dry-run
+```
 
 ### Metadata Configuration
 

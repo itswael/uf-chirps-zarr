@@ -1,0 +1,15 @@
+# CHIRPS Email Notification Recipients
+# This file contains email addresses that will receive execution notifications
+# for bootstrap and incremental ingestion processes.
+#
+# Format: One email address per line
+# Lines starting with # are comments and will be ignored
+# Empty lines are ignored
+#
+# Example:
+# admin@example.com
+# team@example.com
+# monitoring@example.com
+
+# Add your email recipients below:
+

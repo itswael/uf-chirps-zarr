@@ -9,10 +9,11 @@ Coordinates the complete bootstrap ingestion workflow:
 5. Initialize Zarr store with first file
 6. Process and append remaining files in order
 7. Finalize metadata
+8. Send email notification with execution summary
 """
 
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -21,6 +22,7 @@ from src.download.chirps_downloader import CHIRPSDownloader
 from src.preprocess.raster_cleaner import RasterValidator, ValidationError
 from src.convert.tiff_to_zarr import TIFFToZarrConverter, ZarrConversionError
 from src.utils.logging import AuditLogger, setup_logger
+from src.utils.email_notifier import EmailNotifier
 
 
 class BootstrapOrchestrationError(Exception):
@@ -96,6 +98,12 @@ class BootstrapOrchestrator:
         )
         
         self.zarr_path = self.config.ZARR_STORE_PATH
+        
+        # Initialize email notifier
+        self.email_notifier = EmailNotifier()
+        
+        # Track errors for email notification
+        self.error_messages: List[str] = []
     
     def _generate_date_list(self) -> List[date]:
         """
@@ -140,6 +148,8 @@ class BootstrapOrchestrator:
             BootstrapOrchestrationError: If critical error occurs
         """
         workflow_start = time.time()
+        workflow_start_datetime = datetime.now()
+        self.error_messages.clear()  # Reset error tracking
         
         # Generate date list
         dates = self._generate_date_list()
@@ -183,6 +193,17 @@ class BootstrapOrchestrator:
                 self._finalize_zarr()
             
             workflow_duration = time.time() - workflow_start
+            workflow_end_datetime = datetime.now()
+            
+            # Calculate Zarr store size
+            zarr_store_size_mb = None
+            try:
+                if self.zarr_path.exists():
+                    zarr_store_size_mb = sum(
+                        f.stat().st_size for f in self.zarr_path.rglob('*') if f.is_file()
+                    ) / (1024 * 1024)
+            except Exception as e:
+                self.logger.warning(f"Could not calculate Zarr store size: {e}")
             
             # Final summary
             self.logger.info("=" * 80)
@@ -192,6 +213,8 @@ class BootstrapOrchestrator:
             self.logger.info(f"Successfully ingested: {successful}")
             self.logger.info(f"Failed: {failed}")
             self.logger.info(f"Duration: {workflow_duration:.2f}s ({workflow_duration/60:.2f} minutes)")
+            if zarr_store_size_mb:
+                self.logger.info(f"Zarr store size: {zarr_store_size_mb:.2f} MB")
             self.logger.info("=" * 80)
             
             # Audit log
@@ -204,10 +227,32 @@ class BootstrapOrchestrator:
                 workflow_duration
             )
             
+            # Send email notification
+            self._send_email_notification(
+                success=True,
+                start_time=workflow_start_datetime,
+                end_time=workflow_end_datetime,
+                files_processed=successful,
+                files_failed=failed,
+                zarr_store_size_mb=zarr_store_size_mb
+            )
+            
             return total_days, successful, failed
             
         except Exception as e:
+            workflow_end_datetime = datetime.now()
+            self.error_messages.append(f"Critical error: {str(e)}")
             self.logger.error(f"Bootstrap ingestion failed: {e}", exc_info=True)
+            
+            # Send failure email notification
+            self._send_email_notification(
+                success=False,
+                start_time=workflow_start_datetime,
+                end_time=workflow_end_datetime,
+                files_processed=0,
+                files_failed=total_days
+            )
+            
             raise BootstrapOrchestrationError(f"Bootstrap failed: {e}")
         finally:
             # Cleanup
@@ -318,9 +363,9 @@ class BootstrapOrchestrator:
                 )
                 
                 if not is_valid:
-                    self.logger.warning(
-                        f"Skipping {processing_date}: validation failed ({len(errors)} errors)"
-                    )
+                    error_msg = f"{processing_date}: validation failed ({len(errors)} errors)"
+                    self.logger.warning(f"Skipping {error_msg}")
+                    self.error_messages.append(error_msg)
                     failed += 1
                     continue
                 
@@ -359,13 +404,17 @@ class BootstrapOrchestrator:
                     )
                 
             except (ValidationError, ZarrConversionError) as e:
-                self.logger.error(f"Failed to process {processing_date}: {e}")
+                error_msg = f"{processing_date}: {str(e)}"
+                self.logger.error(f"Failed to process {error_msg}")
+                self.error_messages.append(error_msg)
                 failed += 1
             except Exception as e:
+                error_msg = f"{processing_date}: Unexpected error - {str(e)}"
                 self.logger.error(
                     f"Unexpected error processing {processing_date}: {e}",
                     exc_info=True
                 )
+                self.error_messages.append(error_msg)
                 failed += 1
         
         processing_duration = time.time() - processing_start
@@ -387,3 +436,46 @@ class BootstrapOrchestrator:
         except Exception as e:
             self.logger.error(f"Failed to finalize Zarr store: {e}")
             # Don't raise - data is already written
+    
+    def _send_email_notification(
+        self,
+        success: bool,
+        start_time: datetime,
+        end_time: datetime,
+        files_processed: int,
+        files_failed: int,
+        zarr_store_size_mb: Optional[float] = None
+    ) -> None:
+        """
+        Send email notification with execution summary.
+        
+        Args:
+            success: Whether the execution completed successfully
+            start_time: Execution start timestamp
+            end_time: Execution end timestamp
+            files_processed: Number of files successfully processed
+            files_failed: Number of files that failed
+            zarr_store_size_mb: Final Zarr store size in MB
+        """
+        try:
+            date_range = (self.start_date, self.end_date)
+            
+            email_sent = self.email_notifier.send_bootstrap_notification(
+                success=success,
+                start_time=start_time,
+                end_time=end_time,
+                date_range=date_range,
+                files_processed=files_processed,
+                files_failed=files_failed,
+                zarr_store_size_mb=zarr_store_size_mb,
+                error_messages=self.error_messages if self.error_messages else None
+            )
+            
+            if email_sent:
+                self.logger.info("Email notification sent successfully")
+            else:
+                self.logger.info("Email notification skipped (disabled or not configured)")
+                
+        except Exception as e:
+            self.logger.error(f"Failed to send email notification: {e}", exc_info=True)
+            # Don't raise - notification failure shouldn't break the workflow
