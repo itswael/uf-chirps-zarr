@@ -140,13 +140,26 @@ async def get_timeseries(request: DataRequest):
         # Get actual precipitation values from Zarr (no alterations)
         precip = data.precipitation
         
+        # Ensure we have data before attempting aggregation
+        if len(precip.time) == 0:
+            raise HTTPException(
+                status_code=400, 
+                detail="No data found for the specified location and date range"
+            )
+        
         # Apply temporal aggregation if requested
         if request.aggregation == 'weekly':
-            precip = precip.resample(time='W').mean()  # Average, not sum
+            # Only resample if we have enough data
+            if len(precip.time) > 0:
+                precip = precip.resample(time='W').mean()
         elif request.aggregation == 'monthly':
-            precip = precip.resample(time='ME').mean()  # Average, not sum (ME = month-end)
+            # Only resample if we have enough data
+            if len(precip.time) > 0:
+                precip = precip.resample(time='ME').mean()
         elif request.aggregation == 'yearly':
-            precip = precip.resample(time='YE').mean()  # Average, not sum (YE = year-end)
+            # Only resample if we have enough data
+            if len(precip.time) > 0:
+                precip = precip.resample(time='YE').mean()
         
         # Compute values
         precip_computed = precip.compute()
