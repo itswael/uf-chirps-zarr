@@ -5,6 +5,7 @@ Provides API endpoints for the Next.js frontend
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
+import os
 
 import numpy as np
 import xarray as xr
@@ -14,8 +15,15 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import io
 
-# Zarr data path
-ZARR_PATH = Path(__file__).parent.parent.parent / "data" / "zarr" / "chirps_v3.0_daily_precip_v1.0.zarr"
+# Zarr data path - use absolute path resolution
+BACKEND_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = BACKEND_DIR.parent.parent
+ZARR_PATH = PROJECT_ROOT / "data" / "zarr" / "chirps_v3.0_daily_precip_v1.0.zarr"
+
+print(f"Backend directory: {BACKEND_DIR}")
+print(f"Project root: {PROJECT_ROOT}")
+print(f"Zarr path: {ZARR_PATH}")
+print(f"Zarr exists: {ZARR_PATH.exists()}")
 
 app = FastAPI(
     title="CHIRPS Precipitation API",
@@ -37,7 +45,12 @@ def open_zarr():
     """Open the Zarr dataset"""
     if not ZARR_PATH.exists():
         raise HTTPException(status_code=500, detail=f"Zarr store not found: {ZARR_PATH}")
-    return xr.open_zarr(ZARR_PATH, chunks={'time': 30, 'latitude': 500, 'longitude': 500})
+    try:
+        # Zarr 3.1.5 natively supports v3 format
+        # Use smaller chunks for faster single-point access
+        return xr.open_zarr(ZARR_PATH, chunks={'time': 100, 'latitude': 100, 'longitude': 100})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error opening Zarr store: {str(e)}")
 
 
 class SpatialBounds(BaseModel):
@@ -110,28 +123,35 @@ async def get_timeseries(request: DataRequest):
     try:
         ds = open_zarr()
         
-        # Get spatial subset
+        # Use nearest neighbor to get exact grid cell value (no averaging)
+        center_lon = (request.bounds.lon_min + request.bounds.lon_max) / 2
+        center_lat = (request.bounds.lat_min + request.bounds.lat_max) / 2
+        
+        # IMPORTANT: Select spatial point FIRST (reduces data), then time range
+        # This is much faster than selecting time first
         data = ds.sel(
-            longitude=slice(request.bounds.lon_min, request.bounds.lon_max),
-            latitude=slice(request.bounds.lat_max, request.bounds.lat_min),  # Latitude is descending
+            longitude=center_lon,
+            latitude=center_lat,
+            method='nearest'
+        ).sel(
             time=slice(request.date_range.start_date, request.date_range.end_date)
         )
         
-        # Calculate spatial mean
-        precip = data.precipitation.mean(dim=['latitude', 'longitude'])
+        # Get actual precipitation values from Zarr (no alterations)
+        precip = data.precipitation
         
         # Apply temporal aggregation if requested
         if request.aggregation == 'weekly':
-            precip = precip.resample(time='W').sum()
+            precip = precip.resample(time='W').mean()  # Average, not sum
         elif request.aggregation == 'monthly':
-            precip = precip.resample(time='M').sum()
+            precip = precip.resample(time='ME').mean()  # Average, not sum (ME = month-end)
         elif request.aggregation == 'yearly':
-            precip = precip.resample(time='Y').sum()
+            precip = precip.resample(time='YE').mean()  # Average, not sum (YE = year-end)
         
         # Compute values
         precip_computed = precip.compute()
         
-        # Convert to JSON-serializable format
+        # Convert to JSON-serializable format (preserve exact values)
         time_values = [str(t) for t in precip_computed.time.values]
         precip_values = [
             float(v) if not np.isnan(v) else None 
@@ -141,7 +161,7 @@ async def get_timeseries(request: DataRequest):
         return {
             "time": time_values,
             "precipitation": precip_values,
-            "units": "mm/day" if request.aggregation == 'daily' else "mm",
+            "units": "mm/day",
             "aggregation": request.aggregation or "daily"
         }
     except Exception as e:
@@ -154,19 +174,27 @@ async def get_statistics(request: DataRequest):
     try:
         ds = open_zarr()
         
+        # Use nearest neighbor to get exact grid cell value (no averaging)
+        center_lon = (request.bounds.lon_min + request.bounds.lon_max) / 2
+        center_lat = (request.bounds.lat_min + request.bounds.lat_max) / 2
+        
+        # Select spatial point FIRST (faster), then time range
         data = ds.sel(
-            longitude=slice(request.bounds.lon_min, request.bounds.lon_max),
-            latitude=slice(request.bounds.lat_max, request.bounds.lat_min),
+            longitude=center_lon,
+            latitude=center_lat,
+            method='nearest'
+        ).sel(
             time=slice(request.date_range.start_date, request.date_range.end_date)
         )
         
+        # Get actual precipitation values from Zarr (no alterations)
         precip = data.precipitation
         
-        # Calculate statistics
+        # Calculate statistics on actual daily values from Zarr
         stats = {
             "total_precipitation": float(precip.sum().compute()),
             "mean_daily": float(precip.mean().compute()),
-            "median_daily": float(precip.median().compute()),
+            "median_daily": float(precip.quantile(0.5).compute()),
             "max_daily": float(precip.max().compute()),
             "min_daily": float(precip.min().compute()),
             "std_daily": float(precip.std().compute()),
@@ -224,15 +252,17 @@ async def download_icasa(
     try:
         ds = open_zarr()
         
-        # Get data for nearest grid point
+        # Select spatial point FIRST (faster), then time range
         data = ds.sel(
-            longitude=slice(lon - 0.05, lon + 0.05),
-            latitude=slice(lat + 0.05, lat - 0.05),
+            longitude=lon,
+            latitude=lat,
+            method='nearest'
+        ).sel(
             time=slice(start_date, end_date)
         )
         
-        # Extract precipitation values
-        precip = data.precipitation.mean(dim=['latitude', 'longitude']).compute()
+        # Get actual precipitation values from Zarr (no alterations)
+        precip = data.precipitation.compute()
         
         # Create ICASA formatted output
         output = io.StringIO()
@@ -242,12 +272,13 @@ async def download_icasa(
         output.write(f"  UFLC     {lat:.1f}    {lon:.1f}\n\n")
         output.write("@  DATE   RAIN\n")
         
-        # Write daily data in ICASA format (YYYYDDD)
+        # Write daily data in ICASA format (DDDYYYY) - exact values from Zarr
         for time_val, precip_val in zip(precip.time.values, precip.values):
             dt = datetime.fromisoformat(str(time_val)[:10])
-            # Format: YYYYDDD (year + day of year)
-            date_str = dt.strftime("%Y%j")
-            precip_formatted = f"{precip_val:.1f}" if not np.isnan(precip_val) else "0.0"
+            # Format: DDDYYYY (day of year + year)
+            date_str = dt.strftime("%j%Y")
+            # Use exact value from Zarr, only format for display (1 decimal)
+            precip_formatted = f"{float(precip_val):.1f}" if not np.isnan(precip_val) else "0.0"
             output.write(f"{date_str}    {precip_formatted}\n")
         
         # Create response
