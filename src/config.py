@@ -8,9 +8,13 @@ overridden via environment variables.
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
 
 
 class Config:
@@ -84,6 +88,19 @@ class Config:
         # Set to positive integer to limit days per run
         max_days_env = os.getenv("CHIRPS_INCREMENTAL_MAX_DAYS_PER_RUN")
         self._incremental_max_days_per_run = int(max_days_env) if max_days_env else None
+        
+        # Email notification configuration
+        self._email_enabled = os.getenv("CHIRPS_EMAIL_ENABLED", "false").lower() == "true"
+        self._smtp_host = os.getenv("CHIRPS_SMTP_HOST", "smtp.gmail.com")
+        self._smtp_port = int(os.getenv("CHIRPS_SMTP_PORT", "587"))
+        self._smtp_use_tls = os.getenv("CHIRPS_SMTP_USE_TLS", "true").lower() == "true"
+        self._smtp_username = os.getenv("CHIRPS_SMTP_USERNAME", "")
+        self._smtp_password = os.getenv("CHIRPS_SMTP_PASSWORD", "")
+        self._email_from = os.getenv("CHIRPS_EMAIL_FROM", "")
+        self._email_recipients_file = self._base_dir / os.getenv(
+            "CHIRPS_EMAIL_RECIPIENTS_FILE",
+            "config/email_recipients.txt"
+        )
         
         # Metadata configuration
         self._metadata_config_path = self._base_dir / os.getenv(
@@ -206,12 +223,12 @@ class Config:
         return self._retry_delay_seconds
     
     @property
-    def BOOTSTRAP_START_DATE(self) -> datetime.date:
+    def BOOTSTRAP_START_DATE(self) -> date:
         """Start date for initial data ingestion."""
         return self._bootstrap_start_date
     
     @property
-    def BOOTSTRAP_END_DATE(self) -> datetime.date:
+    def BOOTSTRAP_END_DATE(self) -> date:
         """End date for initial data ingestion."""
         return self._bootstrap_end_date
     
@@ -219,6 +236,46 @@ class Config:
     def INCREMENTAL_MAX_DAYS_PER_RUN(self) -> Optional[int]:
         """Maximum days per incremental run (None = unlimited, up to today)."""
         return self._incremental_max_days_per_run
+    
+    @property
+    def EMAIL_ENABLED(self) -> bool:
+        """Whether email notifications are enabled."""
+        return self._email_enabled
+    
+    @property
+    def SMTP_HOST(self) -> str:
+        """SMTP server host."""
+        return self._smtp_host
+    
+    @property
+    def SMTP_PORT(self) -> int:
+        """SMTP server port."""
+        return self._smtp_port
+    
+    @property
+    def SMTP_USE_TLS(self) -> bool:
+        """Whether to use TLS for SMTP connection."""
+        return self._smtp_use_tls
+    
+    @property
+    def SMTP_USERNAME(self) -> str:
+        """SMTP authentication username."""
+        return self._smtp_username
+    
+    @property
+    def SMTP_PASSWORD(self) -> str:
+        """SMTP authentication password."""
+        return self._smtp_password
+    
+    @property
+    def EMAIL_FROM(self) -> str:
+        """Email sender address."""
+        return self._email_from
+    
+    @property
+    def EMAIL_RECIPIENTS_FILE(self) -> Path:
+        """Path to file containing email recipients."""
+        return self._email_recipients_file
     
     @property
     def METADATA_CONFIG_PATH(self) -> Path:
