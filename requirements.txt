@@ -9,3 +9,4 @@ requests
 fastapi
 uvicorn
 pytest
+python-dotenv
