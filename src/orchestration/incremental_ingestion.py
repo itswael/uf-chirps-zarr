@@ -9,13 +9,14 @@ Coordinates the incremental workflow:
 5. Convert and append to Zarr store
 6. Update metadata
 7. Generate summary report
+8. Send email notification with execution summary
 
 Implements the workflow defined in Section 8 of the Technical Design Document.
 Addresses GitHub Issue #20: Incremental orchestrator
 """
 
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -25,6 +26,7 @@ from src.preprocess.raster_cleaner import RasterValidator, ValidationError
 from src.convert.tiff_to_zarr import TIFFToZarrConverter, ZarrConversionError
 from src.utils.logging import AuditLogger, setup_logger
 from src.utils.zarr_state import ZarrStateManager
+from src.utils.email_notifier import EmailNotifier
 
 
 class IncrementalIngestionError(Exception):
@@ -106,8 +108,13 @@ class IncrementalOrchestrator:
         self.zarr_path = self.config.ZARR_STORE_PATH
         self.state_manager = ZarrStateManager(self.zarr_path, self.config)
         
+        # Initialize email notifier
+        self.email_notifier = EmailNotifier()
+        
         # Track ingestion results
         self.summary: Dict = {}
+        self.error_messages: List[str] = []
+        self.gaps_detected: List[str] = []
     
     def _verify_zarr_exists(self) -> None:
         """
@@ -168,6 +175,7 @@ class IncrementalOrchestrator:
            e. Append to Zarr store
            f. Update metadata
         5. Generate summary report
+        6. Send email notification
         
         Args:
             force_date: Force starting from specific date (overrides automatic detection)
@@ -180,6 +188,9 @@ class IncrementalOrchestrator:
             IncrementalIngestionError: If critical error occurs
         """
         workflow_start = time.time()
+        workflow_start_datetime = datetime.now()
+        self.error_messages.clear()  # Reset error tracking
+        self.gaps_detected.clear()  # Reset gap tracking
         
         self.logger.info("=" * 80)
         self.logger.info("STARTING INCREMENTAL INGESTION")
@@ -216,18 +227,54 @@ class IncrementalOrchestrator:
             
             if dry_run:
                 self.logger.info("DRY RUN MODE - No files will be downloaded or ingested")
-                return self._generate_summary(
-                    next_date, 0, 0, 0, time.time() - workflow_start, dry_run=True
+                workflow_duration = time.time() - workflow_start
+                workflow_end_datetime = datetime.now()
+                
+                # Generate summary for dry-run
+                summary = self._generate_summary(
+                    next_date, 0, 0, 0, workflow_duration, dry_run=True
                 )
+                
+                # Send email notification for dry-run
+                self._send_email_notification(
+                    success=True,
+                    start_time=workflow_start_datetime,
+                    end_time=workflow_end_datetime,
+                    dates_checked=0,
+                    new_files_found=0,
+                    files_ingested=0,
+                    files_failed=0,
+                    next_expected_date=summary.get('next_expected_date')
+                )
+                
+                return summary
             
             # Step 3: Download phase (incremental, consecutive days)
             downloaded_files, download_failures, last_download_date = self._download_phase(next_date)
             
             if len(downloaded_files) == 0:
                 self.logger.info("No new files available for ingestion.")
-                return self._generate_summary(
-                    next_date, 0, 0, 0, time.time() - workflow_start
+                workflow_duration = time.time() - workflow_start
+                workflow_end_datetime = datetime.now()
+                
+                # Generate summary
+                summary = self._generate_summary(
+                    next_date, 0, 0, 0, workflow_duration
                 )
+                
+                # Send email notification (no new files)
+                self._send_email_notification(
+                    success=True,
+                    start_time=workflow_start_datetime,
+                    end_time=workflow_end_datetime,
+                    dates_checked=1,  # We checked at least one date
+                    new_files_found=0,
+                    files_ingested=0,
+                    files_failed=0,
+                    next_expected_date=summary.get('next_expected_date')
+                )
+                
+                return summary
             
             self.logger.info(
                 f"Downloaded {len(downloaded_files)} files "
@@ -242,6 +289,7 @@ class IncrementalOrchestrator:
                 self._update_final_metadata()
             
             workflow_duration = time.time() - workflow_start
+            workflow_end_datetime = datetime.now()
             
             # Step 6: Generate summary
             summary = self._generate_summary(
@@ -253,10 +301,36 @@ class IncrementalOrchestrator:
                 last_download_date
             )
             
+            # Step 7: Send email notification
+            self._send_email_notification(
+                success=True,
+                start_time=workflow_start_datetime,
+                end_time=workflow_end_datetime,
+                dates_checked=len(downloaded_files) if downloaded_files else 0,
+                new_files_found=len(downloaded_files) if downloaded_files else 0,
+                files_ingested=successful,
+                files_failed=failed,
+                next_expected_date=summary.get('next_expected_date')
+            )
+            
             return summary
             
         except Exception as e:
+            workflow_end_datetime = datetime.now()
+            self.error_messages.append(f"Critical error: {str(e)}")
             self.logger.error(f"Incremental ingestion failed: {e}", exc_info=True)
+            
+            # Send failure email notification
+            self._send_email_notification(
+                success=False,
+                start_time=workflow_start_datetime,
+                end_time=workflow_end_datetime,
+                dates_checked=0,
+                new_files_found=0,
+                files_ingested=0,
+                files_failed=1
+            )
+            
             raise IncrementalIngestionError(f"Incremental ingestion failed: {e}")
         finally:
             # Cleanup
@@ -361,7 +435,9 @@ class IncrementalOrchestrator:
                 
                 # Step 1: Verify file exists
                 if not file_path.exists():
+                    gap_msg = f"{processing_date.isoformat()}"
                     self.logger.warning(f"Skipping {processing_date}: file not found")
+                    self.gaps_detected.append(gap_msg)
                     failed += 1
                     current_date += timedelta(days=1)
                     continue
@@ -383,12 +459,9 @@ class IncrementalOrchestrator:
                 )
                 
                 if not is_valid:
-                    self.logger.warning(
-                        f"Skipping {processing_date}: validation failed "
-                        f"({len(errors)} errors)"
-                    )
-                    for error in errors[:5]:  # Show first 5 errors
-                        self.logger.warning(f"  - {error}")
+                    error_msg = f"{processing_date}: validation failed ({len(errors)} errors)"
+                    self.logger.warning(f"Skipping {error_msg}")
+                    self.error_messages.append(error_msg)
                     failed += 1
                     current_date += timedelta(days=1)
                     continue
@@ -416,13 +489,17 @@ class IncrementalOrchestrator:
                 )
                 
             except (ValidationError, ZarrConversionError) as e:
-                self.logger.error(f"Failed to process {processing_date}: {e}")
+                error_msg = f"{processing_date}: {str(e)}"
+                self.logger.error(f"Failed to process {error_msg}")
+                self.error_messages.append(error_msg)
                 failed += 1
             except Exception as e:
+                error_msg = f"{processing_date}: Unexpected error - {str(e)}"
                 self.logger.error(
                     f"Unexpected error processing {processing_date}: {e}",
                     exc_info=True
                 )
+                self.error_messages.append(error_msg)
                 failed += 1
             
             # Move to next day
@@ -542,6 +619,53 @@ class IncrementalOrchestrator:
         self.logger.info(f"  Coverage: {summary['zarr_coverage_percent']:.2f}%")
         self.logger.info(f"  Next expected: {summary['next_expected_date']}")
         self.logger.info("=" * 80)
+    
+    def _send_email_notification(
+        self,
+        success: bool,
+        start_time: datetime,
+        end_time: datetime,
+        dates_checked: int,
+        new_files_found: int,
+        files_ingested: int,
+        files_failed: int,
+        next_expected_date: Optional[str] = None
+    ) -> None:
+        """
+        Send email notification with execution summary.
+        
+        Args:
+            success: Whether the execution completed successfully
+            start_time: Execution start timestamp
+            end_time: Execution end timestamp
+            dates_checked: Number of dates checked for new data
+            new_files_found: Number of new files discovered
+            files_ingested: Number of files successfully ingested
+            files_failed: Number of files that failed
+            next_expected_date: Next date expected for incremental update
+        """
+        try:
+            email_sent = self.email_notifier.send_incremental_notification(
+                success=success,
+                start_time=start_time,
+                end_time=end_time,
+                dates_checked=dates_checked,
+                new_files_found=new_files_found,
+                files_ingested=files_ingested,
+                files_failed=files_failed,
+                gaps_detected=self.gaps_detected if self.gaps_detected else None,
+                error_messages=self.error_messages if self.error_messages else None,
+                next_expected_date=next_expected_date
+            )
+            
+            if email_sent:
+                self.logger.info("Email notification sent successfully")
+            else:
+                self.logger.info("Email notification skipped (disabled or not configured)")
+                
+        except Exception as e:
+            self.logger.error(f"Failed to send email notification: {e}", exc_info=True)
+            # Don't raise - notification failure shouldn't break the workflow
     
     def get_summary(self) -> Dict:
         """Get the summary from the last run."""
