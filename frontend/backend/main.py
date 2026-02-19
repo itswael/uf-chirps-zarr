@@ -31,10 +31,15 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Allow CORS for Next.js frontend
+# Allow CORS for Next.js frontend (localhost and network access)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=[
+        "http://localhost:3000", 
+        "http://localhost:3001",
+        "http://10.138.107.50:3000",
+        "http://10.138.107.50:3001"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -203,19 +208,55 @@ async def get_statistics(request: DataRequest):
         # Get actual precipitation values from Zarr (no alterations)
         precip = data.precipitation
         
-        # Calculate statistics on actual daily values from Zarr
-        stats = {
-            "total_precipitation": float(precip.sum().compute()),
-            "mean_daily": float(precip.mean().compute()),
-            "median_daily": float(precip.quantile(0.5).compute()),
-            "max_daily": float(precip.max().compute()),
-            "min_daily": float(precip.min().compute()),
-            "std_daily": float(precip.std().compute()),
-            "days_with_rain": int((precip > 0.1).sum().compute()),
-            "dry_days": int((precip <= 0.1).sum().compute()),
+        # Compute the precipitation data once to avoid dask boolean indexing issues
+        precip_computed = precip.compute()
+        
+        # Calculate statistics on actual daily values from Zarr (all days)
+        all_days_stats = {
+            "total_precipitation": float(precip_computed.sum()),
+            "mean_daily": float(precip_computed.mean()),
+            "median_daily": float(precip_computed.quantile(0.5)),
+            "max_daily": float(precip_computed.max()),
+            "min_daily": float(precip_computed.min()),
+            "std_daily": float(precip_computed.std()),
+            "days_with_rain": int((precip_computed > 0.1).sum()),
+            "dry_days": int((precip_computed <= 0.1).sum()),
         }
         
-        return stats
+        # Calculate statistics for wet days only (excluding dry days)
+        # Filter for wet days (precipitation > 0.1 mm)
+        wet_days_mask = precip_computed > 0.1
+        wet_days_precip = precip_computed[wet_days_mask]
+        
+        # Check if there are any wet days
+        if len(wet_days_precip) > 0:
+            wet_days_stats = {
+                "total_precipitation": float(wet_days_precip.sum()),
+                "mean_daily": float(wet_days_precip.mean()),
+                "median_daily": float(wet_days_precip.quantile(0.5)),
+                "max_daily": float(wet_days_precip.max()),
+                "min_daily": float(wet_days_precip.min()),
+                "std_daily": float(wet_days_precip.std()),
+                "days_with_rain": int(len(wet_days_precip)),
+                "dry_days": 0,
+            }
+        else:
+            # No wet days in the dataset
+            wet_days_stats = {
+                "total_precipitation": 0.0,
+                "mean_daily": 0.0,
+                "median_daily": 0.0,
+                "max_daily": 0.0,
+                "min_daily": 0.0,
+                "std_daily": 0.0,
+                "days_with_rain": 0,
+                "dry_days": 0,
+            }
+        
+        return {
+            "all_days": all_days_stats,
+            "wet_days": wet_days_stats
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
