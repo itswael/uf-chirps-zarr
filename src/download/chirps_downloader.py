@@ -293,6 +293,100 @@ class CHIRPSDownloader:
         
         return successful_files, failed_downloads
     
+    def download_incremental(
+        self,
+        start_date: date,
+        max_consecutive_days: int = 31,
+        stop_on_missing: bool = True
+    ) -> Tuple[List[Path], List[Tuple[date, str]], Optional[date]]:
+        """
+        Download files incrementally starting from a date until files are unavailable.
+        
+        This method is designed for incremental ingestion where you want to
+        download consecutive days until you hit a missing file (indicating
+        data not yet available).
+        
+        Args:
+            start_date: First date to download
+            max_consecutive_days: Maximum number of consecutive days to attempt (default: 31)
+            stop_on_missing: Stop when first unavailable file is encountered (default: True)
+        
+        Returns:
+            Tuple of (successful_files, failed_downloads, last_successful_date)
+            - successful_files: List of successfully downloaded file paths
+            - failed_downloads: List of (date, error_message) tuples for failures
+            - last_successful_date: The last date successfully downloaded, or None
+        
+        Example:
+            >>> downloader.download_incremental(date(2024, 2, 1), max_consecutive_days=31)
+            # Downloads Feb 1, 2, 3... until file not found or max days reached
+        """
+        self.logger.info(
+            f"Starting incremental download from {start_date}, "
+            f"max {max_consecutive_days} days, stop_on_missing={stop_on_missing}"
+        )
+        
+        successful_files = []
+        failed_downloads = []
+        last_successful_date = None
+        
+        current_date = start_date
+        days_attempted = 0
+        
+        while days_attempted < max_consecutive_days:
+            # Try to download this date
+            success, file_path, error_msg = self.download_single(
+                current_date,
+                task_id=f"incremental_{current_date.strftime('%Y%m%d')}"
+            )
+            
+            days_attempted += 1
+            
+            if success and file_path:
+                successful_files.append(file_path)
+                last_successful_date = current_date
+                self.logger.info(
+                    f"Incremental: Downloaded {current_date} "
+                    f"({len(successful_files)} consecutive days)"
+                )
+            else:
+                # Check if it's a 404 (file not available yet)
+                if "404" in str(error_msg) or "not found" in str(error_msg).lower():
+                    self.logger.info(
+                        f"Incremental: File not available for {current_date}. "
+                        f"Data not yet uploaded."
+                    )
+                    
+                    if stop_on_missing:
+                        self.logger.info(
+                            f"Stopping incremental download (stop_on_missing=True). "
+                            f"Downloaded {len(successful_files)} consecutive days."
+                        )
+                        break
+                else:
+                    # Real failure (network error, etc.)
+                    failed_downloads.append((current_date, error_msg or "Unknown error"))
+                    self.logger.warning(
+                        f"Incremental: Failed to download {current_date}: {error_msg}"
+                    )
+                    
+                    if stop_on_missing:
+                        self.logger.info(
+                            f"Stopping incremental download due to failure. "
+                            f"Downloaded {len(successful_files)} consecutive days."
+                        )
+                        break
+            
+            # Move to next day
+            current_date += timedelta(days=1)
+        
+        self.logger.info(
+            f"Incremental download complete: {len(successful_files)} successful, "
+            f"{len(failed_downloads)} failed, last_date={last_successful_date}"
+        )
+        
+        return successful_files, failed_downloads, last_successful_date
+    
     def verify_download(self, file_path: Path) -> bool:
         """
         Verify a downloaded file exists and has content.

@@ -14,7 +14,10 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import xarray as xr
-from config import config
+try:
+    from .config import config
+except ImportError:
+    from config import config
 
 
 class ChirpsZarrClient:

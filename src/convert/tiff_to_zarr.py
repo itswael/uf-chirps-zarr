@@ -37,8 +37,9 @@ class TIFFToZarrConverter:
     Features:
     - Initialize Zarr stores with proper CF metadata
     - Convert GeoTIFF to xarray Dataset
-    - Append data along time dimension
+    - Append data along time dimension with idempotency checks
     - Thread-safe write operations
+    - Chunk-safe appends (preserves existing chunks)
     - Immutable chunking and compression
     """
     
@@ -63,6 +64,40 @@ class TIFFToZarrConverter:
             log_dir=self.config.BASE_DIR / "logs"
         )
         self.audit_logger = audit_logger
+    
+    def check_date_exists(self, zarr_path: Path, check_date: date) -> bool:
+        """
+        Check if a specific date already exists in the Zarr store.
+        
+        This provides idempotency checking before attempting an append.
+        
+        Args:
+            zarr_path: Path to the Zarr store
+            check_date: Date to check for existence
+        
+        Returns:
+            True if date exists, False otherwise
+        
+        Raises:
+            ZarrConversionError: If Zarr store cannot be read
+        """
+        if not zarr_path.exists():
+            return False
+        
+        try:
+            import pandas as pd
+            
+            ds = xr.open_zarr(zarr_path)
+            existing_times = pd.to_datetime(ds.time.values)
+            existing_dates = set(existing_times.date)
+            ds.close()
+            
+            return check_date in existing_dates
+            
+        except Exception as e:
+            raise ZarrConversionError(
+                f"Failed to check if date {check_date} exists: {e}"
+            )
     
     def tiff_to_dataset(
         self,
@@ -143,7 +178,7 @@ class TIFFToZarrConverter:
             ds.attrs['crs'] = 'EPSG:4326'
             
             self.logger.debug(
-                f"Converted to Dataset: {tuple(ds.dims.items())}, "
+                f"Converted to Dataset: {tuple(ds.sizes.items())}, "
                 f"variables: {list(ds.data_vars)}"
             )
             
@@ -284,23 +319,26 @@ class TIFFToZarrConverter:
         self,
         dataset: xr.Dataset,
         zarr_path: Path,
-        time_value: date
+        time_value: date,
+        allow_duplicate: bool = False
     ) -> int:
         """
         Append a dataset to an existing Zarr store along the time dimension.
         
-        This operation is thread-safe (single-writer lock).
+        This operation is thread-safe (single-writer lock) and includes
+        idempotency checks to prevent duplicate date ingestion.
         
         Args:
             dataset: xarray Dataset to append
             zarr_path: Path to the Zarr store
             time_value: Date being appended
+            allow_duplicate: Whether to allow appending duplicate dates (default: False)
             
         Returns:
             Time index where data was appended
             
         Raises:
-            ZarrConversionError: If append fails
+            ZarrConversionError: If append fails or date already exists (when not allowed)
         """
         if not zarr_path.exists():
             raise ZarrConversionError(
@@ -318,6 +356,22 @@ class TIFFToZarrConverter:
                 # Open existing Zarr store
                 existing_ds = xr.open_zarr(zarr_path)
                 current_time_size = existing_ds.sizes['time']
+                
+                # IDEMPOTENCY CHECK: Verify date doesn't already exist
+                if not allow_duplicate:
+                    import pandas as pd
+                    existing_times = pd.to_datetime(existing_ds.time.values)
+                    existing_dates = set(existing_times.date)
+                    
+                    if time_value in existing_dates:
+                        existing_ds.close()
+                        error_msg = (
+                            f"Date {time_value} already exists in Zarr store. "
+                            "Duplicate ingestion prevented by idempotency guard."
+                        )
+                        self.logger.warning(error_msg)
+                        raise ZarrConversionError(error_msg)
+                
                 existing_ds.close()
                 
                 # Remove encoding-related attributes that may conflict

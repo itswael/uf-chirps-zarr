@@ -16,11 +16,43 @@ A comprehensive client library for accessing and testing the CHIRPS v3.0 Zarr st
 - `config.py` - Client configuration (paths, regions, date ranges, performance tuning)
 - `zarr_client.py` - Main client class with all access methods
 - `examples.py` - Comprehensive examples demonstrating all features
+- `examples2.py` - **Simple data explorer for extracting precipitation data**
 - `README.md` - This file
 
 ## Quick Start
 
-### Basic Usage
+### Simple Data Extraction (examples2.py)
+
+For quick data extraction without complex operations, use the `ChirpsDataExplorer`:
+
+```python
+from examples2 import ChirpsDataExplorer
+
+# Extract data for a single point
+with ChirpsDataExplorer() as explorer:
+    df = explorer.get_precipitation_data(
+        latitude=42.0,
+        longitude=-93.5,
+        start_date="2025-01-01",
+        end_date="2025-01-31",
+        method='nearest'  # or 'interp' for interpolation
+    )
+    
+    # df is a pandas DataFrame with columns: date, precipitation_mm
+    print(df)
+    
+    # Save to CSV
+    df.to_csv("output.csv", index=False)
+```
+
+**To customize**: Edit the `custom_query()` function in `examples2.py` and run:
+```bash
+python examples2.py
+```
+
+### Advanced Client Usage (zarr_client.py)
+
+For more complex operations, use the full `ChirpsZarrClient`:
 
 ```python
 from zarr_client import ChirpsZarrClient

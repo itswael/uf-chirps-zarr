@@ -332,6 +332,37 @@ class AuditLogger:
             None, extra={"extra_fields": extra_fields}
         )
         self.logger.handle(record)
+    
+    def log_event(
+        self,
+        event_type: str,
+        metadata: Dict[str, Any],
+        level: int = logging.INFO,
+        message: Optional[str] = None
+    ) -> None:
+        """
+        Log a generic event with arbitrary metadata.
+        
+        This is a flexible method for logging events that don't fit
+        into the predefined logging methods.
+        
+        Args:
+            event_type: Type of event (e.g., "incremental_start", "gap_detected")
+            metadata: Dictionary of event-specific metadata
+            level: Logging level (default: INFO)
+            message: Optional human-readable message (default: capitalized event_type)
+        """
+        if message is None:
+            message = event_type.replace("_", " ").capitalize()
+        
+        extra_fields = {"event": event_type}
+        extra_fields.update(metadata)
+        
+        record = self.logger.makeRecord(
+            self.logger.name, level, "", 0, message, (),
+            None, extra={"extra_fields": extra_fields}
+        )
+        self.logger.handle(record)
 
 
 def setup_logger(
