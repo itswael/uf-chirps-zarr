@@ -10,8 +10,6 @@ import {
   CircularProgress,
 } from '@mui/material';
 import {
-  LineChart,
-  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -95,70 +93,35 @@ export default function PrecipitationChart({
         </Box>
       ) : data && chartData.length > 0 ? (
         <ResponsiveContainer width="100%" height={appConfig.visualization.chart.height}>
-          {aggregation === 'daily' ? (
-            <LineChart
-              data={chartData}
-              margin={appConfig.visualization.chart.margin}
-            >
-              <CartesianGrid strokeDasharray="3 3" stroke={appConfig.visualization.colors.gridLines} />
-              <XAxis
-                dataKey="date"
-                tick={{ fontSize: 12 }}
-                angle={-45}
-                textAnchor="end"
-                height={80}
-              />
-              <YAxis
-                label={{ value: data.units, angle: -90, position: 'insideLeft' }}
-                tick={{ fontSize: 12 }}
-              />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: 'rgba(255, 255, 255, 0.95)',
-                  border: '1px solid #ccc',
-                }}
-              />
-              <Legend />
-              <Line
-                type="monotone"
-                dataKey="precipitation"
-                stroke={appConfig.visualization.colors.precipitation}
-                strokeWidth={2}
-                dot={false}
-                name="Precipitation"
-              />
-            </LineChart>
-          ) : (
-            <BarChart
-              data={chartData}
-              margin={appConfig.visualization.chart.margin}
-            >
-              <CartesianGrid strokeDasharray="3 3" stroke={appConfig.visualization.colors.gridLines} />
-              <XAxis
-                dataKey="date"
-                tick={{ fontSize: 12 }}
-                angle={-45}
-                textAnchor="end"
-                height={80}
-              />
-              <YAxis
-                label={{ value: data.units, angle: -90, position: 'insideLeft' }}
-                tick={{ fontSize: 12 }}
-              />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: 'rgba(255, 255, 255, 0.95)',
-                  border: '1px solid #ccc',
-                }}
-              />
-              <Legend />
-              <Bar
-                dataKey="precipitation"
-                fill={appConfig.visualization.colors.precipitation}
-                name="Precipitation"
-              />
-            </BarChart>
-          )}
+          <BarChart
+            data={chartData}
+            margin={appConfig.visualization.chart.margin}
+          >
+            <CartesianGrid strokeDasharray="3 3" stroke={appConfig.visualization.colors.gridLines} />
+            <XAxis
+              dataKey="date"
+              tick={{ fontSize: 12 }}
+              angle={-45}
+              textAnchor="end"
+              height={80}
+            />
+            <YAxis
+              label={{ value: data.units, angle: -90, position: 'insideLeft' }}
+              tick={{ fontSize: 12 }}
+            />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                border: '1px solid #ccc',
+              }}
+            />
+            <Legend />
+            <Bar
+              dataKey="precipitation"
+              fill={appConfig.visualization.colors.precipitation}
+              name="Precipitation"
+            />
+          </BarChart>
         </ResponsiveContainer>
       ) : (
         <Box
