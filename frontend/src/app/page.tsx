@@ -16,6 +16,8 @@ import {
   Alert,
   Chip,
   Stack,
+  TextField,
+  Button,
 } from '@mui/material';
 import { Menu as MenuIcon, Close as CloseIcon, Info } from '@mui/icons-material';
 import dynamic from 'next/dynamic';
@@ -39,6 +41,10 @@ export default function Home() {
   const [startDate, setStartDate] = useState(appConfig.date.defaultStartDate);
   const [endDate, setEndDate] = useState(appConfig.date.defaultEndDate);
   const [aggregation, setAggregation] = useState(appConfig.visualization.defaultAggregation);
+  
+  // Coordinate input state
+  const [latInput, setLatInput] = useState('');
+  const [lonInput, setLonInput] = useState('');
   
   // Data state
   const [chartData, setChartData] = useState<any>(null);
@@ -106,6 +112,19 @@ export default function Home() {
 
   const handleLocationSelect = (lat: number, lon: number, zoom: number) => {
     setLocation({ lat, lon, zoom });
+    setLatInput(lat.toFixed(4));
+    setLonInput(lon.toFixed(4));
+  };
+
+  const handleCoordinateSubmit = () => {
+    const lat = parseFloat(latInput);
+    const lon = parseFloat(lonInput);
+    
+    if (!isNaN(lat) && !isNaN(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) {
+      setLocation({ lat, lon, zoom: location?.zoom || 6 });
+    } else {
+      alert('Please enter valid coordinates (Lat: -90 to 90, Lon: -180 to 180)');
+    }
   };
 
   const handleToggleDrawer = () => {
@@ -157,6 +176,38 @@ export default function Home() {
                 color="secondary"
                 variant="outlined"
               />
+            </Stack>
+            
+            <Typography variant="caption" sx={{ mt: 2, mb: 1, display: 'block' }}>
+              Or enter coordinates manually:
+            </Typography>
+            <Stack spacing={1}>
+              <TextField
+                label="Latitude"
+                value={latInput}
+                onChange={(e) => setLatInput(e.target.value)}
+                size="small"
+                type="number"
+                inputProps={{ step: 0.0001, min: -90, max: 90 }}
+                fullWidth
+              />
+              <TextField
+                label="Longitude"
+                value={lonInput}
+                onChange={(e) => setLonInput(e.target.value)}
+                size="small"
+                type="number"
+                inputProps={{ step: 0.0001, min: -180, max: 180 }}
+                fullWidth
+              />
+              <Button
+                variant="contained"
+                size="small"
+                onClick={handleCoordinateSubmit}
+                fullWidth
+              >
+                Apply Coordinates
+              </Button>
             </Stack>
           </Paper>
         )}
