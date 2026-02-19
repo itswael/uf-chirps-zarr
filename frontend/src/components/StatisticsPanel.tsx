@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import {
   Paper,
   Box,
@@ -8,6 +9,8 @@ import {
   Card,
   CardContent,
   CircularProgress,
+  Tabs,
+  Tab,
 } from '@mui/material';
 import {
   WaterDrop,
@@ -29,12 +32,23 @@ interface Statistics {
   dry_days: number;
 }
 
+interface StatisticsData {
+  all_days: Statistics;
+  wet_days: Statistics;
+}
+
 interface StatisticsPanelProps {
-  statistics: Statistics | null;
+  statistics: StatisticsData | null;
   loading: boolean;
 }
 
 export default function StatisticsPanel({ statistics, loading }: StatisticsPanelProps) {
+  const [selectedTab, setSelectedTab] = useState(0);
+
+  const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
+    setSelectedTab(newValue);
+  };
+
   if (loading) {
     return (
       <Paper elevation={2} sx={{ p: 3 }}>
@@ -55,53 +69,64 @@ export default function StatisticsPanel({ statistics, loading }: StatisticsPanel
     );
   }
 
+  // Select the appropriate statistics based on the tab
+  const currentStats = selectedTab === 0 ? statistics.all_days : statistics.wet_days;
+
   const stats = [
     {
       label: 'Total Precipitation',
-      value: `${statistics.total_precipitation.toFixed(1)} mm`,
+      value: `${currentStats.total_precipitation.toFixed(1)} mm`,
       icon: <WaterDrop />,
       color: '#2196f3',
     },
     {
       label: 'Mean Daily',
-      value: `${statistics.mean_daily.toFixed(2)} mm/day`,
+      value: `${currentStats.mean_daily.toFixed(2)} mm/day`,
       icon: <ShowChart />,
       color: '#4caf50',
     },
     {
       label: 'Median Daily',
-      value: `${statistics.median_daily.toFixed(2)} mm/day`,
+      value: `${currentStats.median_daily.toFixed(2)} mm/day`,
       icon: <BarChartIcon />,
       color: '#ff9800',
     },
     {
       label: 'Max Daily',
-      value: `${statistics.max_daily.toFixed(1)} mm/day`,
+      value: `${currentStats.max_daily.toFixed(1)} mm/day`,
       icon: <TrendingUp />,
       color: '#f44336',
     },
     {
       label: 'Min Daily',
-      value: `${statistics.min_daily.toFixed(1)} mm/day`,
+      value: `${currentStats.min_daily.toFixed(1)} mm/day`,
       icon: <TrendingDown />,
       color: '#9c27b0',
     },
     {
       label: 'Std. Deviation',
-      value: `${statistics.std_daily.toFixed(2)} mm/day`,
+      value: `${currentStats.std_daily.toFixed(2)} mm/day`,
       icon: <Opacity />,
       color: '#00bcd4',
     },
   ];
 
-  const totalDays = statistics.days_with_rain + statistics.dry_days;
-  const rainPercentage = totalDays > 0 ? (statistics.days_with_rain / totalDays) * 100 : 0;
+  const totalDays = currentStats.days_with_rain + currentStats.dry_days;
+  const rainPercentage = totalDays > 0 ? (currentStats.days_with_rain / totalDays) * 100 : 0;
 
   return (
     <Paper elevation={2} sx={{ p: 2 }}>
       <Typography variant="h6" gutterBottom>
         Statistical Summary
       </Typography>
+      <Tabs 
+        value={selectedTab} 
+        onChange={handleTabChange} 
+        sx={{ mb: 2, borderBottom: 1, borderColor: 'divider' }}
+      >
+        <Tab label="All Days" />
+        <Tab label="Wet Days Only" />
+      </Tabs>
       <Grid container spacing={2}>
         {stats.map((stat, index) => (
           <Grid item xs={12} sm={6} key={index}>
@@ -140,7 +165,7 @@ export default function StatisticsPanel({ statistics, loading }: StatisticsPanel
                     Days with Rain
                   </Typography>
                   <Typography variant="h6" color="primary">
-                    {statistics.days_with_rain} ({rainPercentage.toFixed(1)}%)
+                    {currentStats.days_with_rain} ({rainPercentage.toFixed(1)}%)
                   </Typography>
                 </Grid>
                 <Grid item xs={6}>
@@ -148,7 +173,7 @@ export default function StatisticsPanel({ statistics, loading }: StatisticsPanel
                     Dry Days
                   </Typography>
                   <Typography variant="h6" color="text.primary">
-                    {statistics.dry_days} ({(100 - rainPercentage).toFixed(1)}%)
+                    {currentStats.dry_days} ({(100 - rainPercentage).toFixed(1)}%)
                   </Typography>
                 </Grid>
               </Grid>
