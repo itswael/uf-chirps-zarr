@@ -107,6 +107,59 @@ class ApiClient {
     link.remove();
     window.URL.revokeObjectURL(url);
   }
+
+  /**
+   * Validate a shapefile before processing
+   */
+  /**
+   * Validate a shapefile before processing
+   */
+  async validateShapefile(file: File) {
+    const formData = new FormData();
+    formData.append('shapefile', file);
+    
+    const response = await this.client.post('/api/validate-shapefile', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  }
+
+  /**
+   * Download ICASA files for multiple points from shapefile
+   */
+  async downloadIcasaMulti(params: {
+    file: File;
+    start_date: string;
+    end_date: string;
+  }) {
+    const formData = new FormData();
+    formData.append('shapefile', params.file);
+    formData.append('start_date', params.start_date);
+    formData.append('end_date', params.end_date);
+
+    const response = await this.client.post('/api/download/icasa-multi', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+      responseType: 'blob',
+      timeout: 300000, // 5 minutes for large files
+    });
+    
+    // Create download link
+    const url = window.URL.createObjectURL(new Blob([response.data]));
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute(
+      'download',
+      `weather_data_${params.start_date}_${params.end_date}.zip`
+    );
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  }
 }
 
 export const apiClient = new ApiClient();
