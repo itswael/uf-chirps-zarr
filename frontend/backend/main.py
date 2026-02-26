@@ -211,29 +211,33 @@ async def get_statistics(request: DataRequest):
         # Compute the precipitation data once to avoid dask boolean indexing issues
         precip_computed = precip.compute()
         
+        # Round to 1 decimal place to match display format (consistent with ICASA output)
+        # This ensures 0.09 rounds to 0.1 and counts as a wet day
+        precip_rounded = np.round(precip_computed, 1)
+        
         # Calculate statistics on actual daily values from Zarr (all days)
         all_days_stats = {
-            "total_precipitation": float(precip_computed.sum()),
-            "mean_daily": float(precip_computed.mean()),
-            "median_daily": float(precip_computed.quantile(0.5)),
-            "max_daily": float(precip_computed.max()),
-            "min_daily": float(precip_computed.min()),
-            "std_daily": float(precip_computed.std()),
-            "days_with_rain": int((precip_computed > 0.1).sum()),
-            "dry_days": int((precip_computed <= 0.1).sum()),
+            "total_precipitation": float(precip_rounded.sum()),
+            "mean_daily": float(precip_rounded.mean()),
+            "median_daily": float(np.median(precip_rounded)),
+            "max_daily": float(precip_rounded.max()),
+            "min_daily": float(precip_rounded.min()),
+            "std_daily": float(precip_rounded.std()),
+            "days_with_rain": int((precip_rounded >= 0.1).sum()),
+            "dry_days": int((precip_rounded < 0.1).sum()),
         }
         
         # Calculate statistics for wet days only (excluding dry days)
-        # Filter for wet days (precipitation > 0.1 mm)
-        wet_days_mask = precip_computed > 0.1
-        wet_days_precip = precip_computed[wet_days_mask]
+        # Filter for wet days (precipitation >= 0.1 mm)
+        wet_days_mask = precip_rounded >= 0.1
+        wet_days_precip = precip_rounded[wet_days_mask]
         
         # Check if there are any wet days
         if len(wet_days_precip) > 0:
             wet_days_stats = {
                 "total_precipitation": float(wet_days_precip.sum()),
                 "mean_daily": float(wet_days_precip.mean()),
-                "median_daily": float(wet_days_precip.quantile(0.5)),
+                "median_daily": float(np.median(wet_days_precip)),
                 "max_daily": float(wet_days_precip.max()),
                 "min_daily": float(wet_days_precip.min()),
                 "std_daily": float(wet_days_precip.std()),
