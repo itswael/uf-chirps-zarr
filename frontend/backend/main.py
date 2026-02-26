@@ -219,13 +219,13 @@ async def get_statistics(request: DataRequest):
             "max_daily": float(precip_computed.max()),
             "min_daily": float(precip_computed.min()),
             "std_daily": float(precip_computed.std()),
-            "days_with_rain": int((precip_computed > 0.1).sum()),
-            "dry_days": int((precip_computed <= 0.1).sum()),
+            "days_with_rain": int((precip_computed >= 0.1).sum()),
+            "dry_days": int((precip_computed < 0.1).sum()),
         }
         
         # Calculate statistics for wet days only (excluding dry days)
-        # Filter for wet days (precipitation > 0.1 mm)
-        wet_days_mask = precip_computed > 0.1
+        # Filter for wet days (precipitation >= 0.1 mm)
+        wet_days_mask = precip_computed >= 0.1
         wet_days_precip = precip_computed[wet_days_mask]
         
         # Check if there are any wet days
