@@ -38,6 +38,7 @@ export default function Home() {
 
   // State
   const [location, setLocation] = useState<{ lat: number; lon: number; zoom: number } | null>(null);
+  const [metadata, setMetadata] = useState<any>(null);
   const [startDate, setStartDate] = useState(appConfig.date.defaultStartDate);
   const [endDate, setEndDate] = useState(appConfig.date.defaultEndDate);
   const [aggregation, setAggregation] = useState(appConfig.visualization.defaultAggregation);
@@ -52,6 +53,34 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [statsLoading, setStatsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Fetch metadata on mount
+  useEffect(() => {
+    const fetchMetadata = async () => {
+      try {
+        const meta = await apiClient.getMetadata();
+        setMetadata(meta);
+        
+        // Calculate default dates from metadata
+        const maxDateStr = meta.time_range.end.split('T')[0];
+        const maxDate = new Date(maxDateStr);
+        
+        // Set end date to the last day of the month containing maxDate
+        const endDateObj = new Date(maxDate.getFullYear(), maxDate.getMonth() + 1, 0);
+        const defaultEnd = endDateObj.toISOString().split('T')[0];
+        
+        // Set start date to the first day of that same month
+        const startDateObj = new Date(maxDate.getFullYear(), maxDate.getMonth(), 1);
+        const startDateStr = startDateObj.toISOString().split('T')[0];
+        
+        setEndDate(defaultEnd);
+        setStartDate(startDateStr);
+      } catch (err) {
+        console.error('Error fetching metadata:', err);
+      }
+    };
+    fetchMetadata();
+  }, []);
 
   // Fetch data when location, dates, or aggregation changes
   useEffect(() => {
@@ -217,6 +246,8 @@ export default function Home() {
           endDate={endDate}
           onStartDateChange={setStartDate}
           onEndDateChange={setEndDate}
+          minDate={metadata?.time_range?.start?.split('T')[0] || appConfig.date.minDate}
+          maxDate={metadata?.time_range?.end?.split('T')[0] || appConfig.date.maxDate}
         />
 
         <StatisticsPanel statistics={statistics} loading={statsLoading} />
