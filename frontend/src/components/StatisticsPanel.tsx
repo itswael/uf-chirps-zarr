@@ -19,6 +19,8 @@ import {
   BarChart as BarChartIcon,
   TrendingUp,
   TrendingDown,
+  Umbrella,
+  WbSunny,
 } from '@mui/icons-material';
 
 interface Statistics {
@@ -153,30 +155,49 @@ export default function StatisticsPanel({ statistics, loading }: StatisticsPanel
             </Card>
           </Grid>
         ))}
-        <Grid item xs={12}>
-          <Card elevation={1}>
-            <CardContent>
-              <Typography variant="subtitle2" gutterBottom>
-                Precipitation Days
-              </Typography>
-              <Grid container spacing={2}>
-                <Grid item xs={6}>
-                  <Typography variant="body2" color="text.secondary">
+        <Grid item xs={12} sm={6}>
+          <Card
+            elevation={1}
+            sx={{
+              bgcolor: '#2196f310',
+              borderLeft: `4px solid #2196f3`,
+            }}
+          >
+            <CardContent sx={{ py: 1.5, px: 2 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Box sx={{ color: '#2196f3' }}><Umbrella /></Box>
+                <Box sx={{ flex: 1 }}>
+                  <Typography variant="caption" color="text.secondary">
                     Days with Rain
                   </Typography>
-                  <Typography variant="h6" color="primary">
+                  <Typography variant="h6" sx={{ fontWeight: 600 }}>
                     {currentStats.days_with_rain} ({rainPercentage.toFixed(1)}%)
                   </Typography>
-                </Grid>
-                <Grid item xs={6}>
-                  <Typography variant="body2" color="text.secondary">
+                </Box>
+              </Box>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid item xs={12} sm={6}>
+          <Card
+            elevation={1}
+            sx={{
+              bgcolor: '#ff980810',
+              borderLeft: `4px solid #ff9800`,
+            }}
+          >
+            <CardContent sx={{ py: 1.5, px: 2 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Box sx={{ color: '#ff9800' }}><WbSunny /></Box>
+                <Box sx={{ flex: 1 }}>
+                  <Typography variant="caption" color="text.secondary">
                     Dry Days
                   </Typography>
-                  <Typography variant="h6" color="text.primary">
+                  <Typography variant="h6" sx={{ fontWeight: 600 }}>
                     {currentStats.dry_days} ({(100 - rainPercentage).toFixed(1)}%)
                   </Typography>
-                </Grid>
-              </Grid>
+                </Box>
+              </Box>
             </CardContent>
           </Card>
         </Grid>
