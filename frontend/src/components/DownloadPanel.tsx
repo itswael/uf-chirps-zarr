@@ -18,6 +18,7 @@ import {
   ListItemText,
   IconButton,
   Tooltip,
+  CircularProgress,
 } from '@mui/material';
 import {
   Download,
@@ -360,7 +361,7 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
               fullWidth
               onClick={handleMultiDownload}
               disabled={!selectedFile || !validationInfo?.valid || downloading}
-              startIcon={<Download />}
+              startIcon={downloading ? <CircularProgress size={20} color="inherit" /> : <Download />}
             >
               {downloading
                 ? 'Generating Files...'
