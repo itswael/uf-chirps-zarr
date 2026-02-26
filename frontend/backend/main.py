@@ -6,24 +6,46 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 import os
+import logging
+import tempfile
+import shutil
 
 import numpy as np
 import xarray as xr
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import io
 
-# Zarr data path - use absolute path resolution
-BACKEND_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = BACKEND_DIR.parent.parent
-ZARR_PATH = PROJECT_ROOT / "data" / "zarr" / "chirps_v3.0_daily_precip_v1.0.zarr"
+# Import configuration
+from config import config
 
-print(f"Backend directory: {BACKEND_DIR}")
-print(f"Project root: {PROJECT_ROOT}")
-print(f"Zarr path: {ZARR_PATH}")
-print(f"Zarr exists: {ZARR_PATH.exists()}")
+# Import utility modules
+from utils.shapefile_processor import ShapefileProcessor
+from utils.icasa_generator import IcasaWeatherGenerator
+from utils.async_processor import generate_weather_package
+
+# Configure logging
+logging.basicConfig(
+    level=getattr(logging, config.LOG_LEVEL),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Zarr data path - use configuration
+ZARR_PATH = config.ZARR_PATH
+
+# Validate configuration on startup
+try:
+    config.validate()
+    logger.info(f"Configuration validated successfully")
+    logger.info(f"Zarr path: {ZARR_PATH}")
+    logger.info(f"Max shapefile points: {config.MAX_SHAPEFILE_POINTS}")
+    logger.info(f"Batch size: {config.BATCH_SIZE}")
+except Exception as e:
+    logger.error(f"Configuration validation failed: {e}")
+    raise
 
 app = FastAPI(
     title="CHIRPS Precipitation API",
@@ -34,12 +56,7 @@ app = FastAPI(
 # Allow CORS for Next.js frontend (localhost and network access)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000", 
-        "http://localhost:3001",
-        "http://10.138.107.50:3000",
-        "http://10.138.107.50:3001"
-    ],
+    allow_origins=config.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -52,8 +69,15 @@ def open_zarr():
         raise HTTPException(status_code=500, detail=f"Zarr store not found: {ZARR_PATH}")
     try:
         # Zarr 3.1.5 natively supports v3 format
-        # Use smaller chunks for faster single-point access
-        return xr.open_zarr(ZARR_PATH, chunks={'time': 100, 'latitude': 100, 'longitude': 100})
+        # Use configurable chunks for optimal performance
+        return xr.open_zarr(
+            ZARR_PATH,
+            chunks={
+                'time': config.ZARR_TIME_CHUNKS,
+                'latitude': config.ZARR_LAT_CHUNKS,
+                'longitude': config.ZARR_LON_CHUNKS
+            }
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error opening Zarr store: {str(e)}")
 
@@ -306,50 +330,199 @@ async def download_icasa(
     start_date: str = Query(...),
     end_date: str = Query(...)
 ):
-    """Download precipitation data in ICASA format"""
+    """Download precipitation data in ICASA format for a single location"""
     try:
         ds = open_zarr()
         
-        # Select spatial point FIRST (faster), then time range
-        data = ds.sel(
-            longitude=lon,
-            latitude=lat,
-            method='nearest'
-        ).sel(
-            time=slice(start_date, end_date)
+        # Use the ICASA generator for consistency
+        generator = IcasaWeatherGenerator(ds)
+        content = generator.generate_icasa_file(
+            lat=lat,
+            lon=lon,
+            start_date=start_date,
+            end_date=end_date,
+            variables=config.DEFAULT_VARIABLES,
+            site_code=config.DEFAULT_SITE_CODE
         )
         
-        # Get actual precipitation values from Zarr (no alterations)
-        precip = data.precipitation.compute()
-        
-        # Create ICASA formatted output
-        output = io.StringIO()
-        output.write("$WEATHER DATA: UF\n\n")
-        output.write("! RAIN     Precipitation Corrected (mm/day)\n\n")
-        output.write(f"@ INSI   WTHLAT  WTHLONG\n")
-        output.write(f"  UFLC     {lat:.1f}    {lon:.1f}\n\n")
-        output.write("@  DATE   RAIN\n")
-        
-        # Write daily data in ICASA format (DDDYYYY) - exact values from Zarr
-        for time_val, precip_val in zip(precip.time.values, precip.values):
-            dt = datetime.fromisoformat(str(time_val)[:10])
-            # Format: YYYYDDDD (year +day of year)
-            date_str = dt.strftime("%Y%j")
-            # Use exact value from Zarr, only format for display (1 decimal)
-            precip_formatted = f"{float(precip_val):.1f}" if not np.isnan(precip_val) else "0.0"
-            output.write(f"{date_str}    {precip_formatted}\n")
-        
         # Create response
-        output.seek(0)
-        filename = f"weather_{lat}_{lon}_{start_date}_{end_date}.txt"
+        filename = IcasaWeatherGenerator.create_filename(
+            lat=lat,
+            lon=lon,
+            start_date=start_date,
+            end_date=end_date
+        )
         
         return StreamingResponse(
-            io.BytesIO(output.getvalue().encode()),
+            io.BytesIO(content.encode()),
             media_type="text/plain",
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
     except Exception as e:
+        logger.error(f"Error generating ICASA file: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/download/icasa-multi")
+async def download_icasa_multi(
+    shapefile: UploadFile = File(..., description="Shapefile (.shp)"),
+    start_date: str = Form(...),
+    end_date: str = Form(...)
+):
+    """
+    Download ICASA weather data for multiple points from a shapefile.
+    Extracts all points from the shapefile and creates one ICASA file per point.
+    Returns a zip file containing individual ICASA files for each coordinate.
+    
+    Note: Only the .shp file is required. Missing .shx and .dbf files will be auto-generated.
+    """
+    temp_dir = None
+    
+    try:
+        # Read uploaded file
+        shp_content = await shapefile.read()
+        
+        # Save shapefile
+        filename = shapefile.filename or 'shapefile.shp'
+        shp_path = ShapefileProcessor.save_uploaded_shapefile(
+            uploaded_file=shp_content,
+            filename=filename
+        )
+        temp_dir = shp_path.parent
+        
+        # Extract coordinates
+        logger.info(f"Extracting coordinates from shapefile: {filename}")
+        coordinates = ShapefileProcessor.extract_coordinates_from_shapefile(shp_path)
+        
+        # Validate coordinates
+        validation = ShapefileProcessor.validate_coordinates(
+            coordinates,
+            max_points=config.MAX_SHAPEFILE_POINTS,
+            lat_bounds=config.LAT_BOUNDS,
+            lon_bounds=config.LON_BOUNDS
+        )
+        if not validation['valid']:
+            raise HTTPException(
+                status_code=400,
+                detail=validation['message']
+            )
+        
+        logger.info(f"Processing {len(coordinates)} coordinates")
+        
+        # Filter to valid coordinates only
+        valid_coords = [
+            (lon, lat) for lon, lat in coordinates
+            if -90 <= lat <= 90 and -180 <= lon <= 180
+        ]
+        
+        if len(valid_coords) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="No valid coordinates found in shapefile"
+            )
+        
+        # Open dataset
+        ds = open_zarr()
+        
+        # Generate weather package
+        logger.info("Generating weather data package...")
+        zip_content = await generate_weather_package(
+            dataset=ds,
+            coordinates=valid_coords,
+            start_date=start_date,
+            end_date=end_date,
+            variables=config.DEFAULT_VARIABLES,
+            max_workers=config.MAX_WORKERS,
+            batch_size=config.BATCH_SIZE
+        )
+        
+        logger.info(f"Successfully generated package with {len(valid_coords)} files")
+        
+        # Create response
+        filename = f"weather_data_{start_date}_{end_date}.zip"
+        
+        return StreamingResponse(
+            io.BytesIO(zip_content),
+            media_type="application/zip",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing shapefile: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error processing shapefile: {str(e)}")
+    finally:
+        # Clean up temporary directory
+        if temp_dir and temp_dir.exists():
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception as e:
+                logger.warning(f"Failed to clean up temporary directory: {e}")
+
+
+@app.post("/api/validate-shapefile")
+async def validate_shapefile(
+    shapefile: UploadFile = File(..., description="Shapefile (.shp)")
+):
+    """
+    Validate a shapefile and return coordinate information without processing.
+    Useful for preview before downloading.
+    
+    Note: Only the .shp file is required. Missing .shx and .dbf files will be auto-generated.
+    """
+    temp_dir = None
+    
+    try:
+        # Read uploaded file
+        shp_content = await shapefile.read()
+        
+        # Save shapefile
+        filename = shapefile.filename or 'shapefile.shp'
+        shp_path = ShapefileProcessor.save_uploaded_shapefile(
+            uploaded_file=shp_content,
+            filename=filename
+        )
+        temp_dir = shp_path.parent
+        
+        # Extract coordinates
+        coordinates = ShapefileProcessor.extract_coordinates_from_shapefile(shp_path)
+        
+        # Validate coordinates
+        validation = ShapefileProcessor.validate_coordinates(
+            coordinates,
+            max_points=config.MAX_SHAPEFILE_POINTS,
+            lat_bounds=config.LAT_BOUNDS,
+            lon_bounds=config.LON_BOUNDS
+        )
+        
+        # Add sample coordinates for preview (first 5)
+        sample_coords = coordinates[:5]
+        
+        return {
+            "valid": validation['valid'],
+            "message": validation['message'],
+            "total_points": len(coordinates),
+            "valid_points": validation.get('valid_points', len(coordinates)),
+            "invalid_points": validation.get('invalid_points', 0),
+            "sample_coordinates": [
+                {"lon": lon, "lat": lat} for lon, lat in sample_coords
+            ],
+            "issues": validation.get('issues', [])
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error validating shapefile: {e}")
+        raise HTTPException(status_code=500, detail=f"Error validating shapefile: {str(e)}")
+    finally:
+        # Clean up temporary directory
+        if temp_dir and temp_dir.exists():
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception as e:
+                logger.warning(f"Failed to clean up temporary directory: {e}")
 
 
 if __name__ == "__main__":
