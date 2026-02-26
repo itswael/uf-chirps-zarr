@@ -3,13 +3,14 @@
 import { Paper, Box, Typography, Stack } from '@mui/material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import dayjs, { Dayjs } from 'dayjs';
-import appConfig from '@/config/app.config';
 
 interface DateRangeSelectorProps {
   startDate: string;
   endDate: string;
   onStartDateChange: (date: string) => void;
   onEndDateChange: (date: string) => void;
+  minDate: string;
+  maxDate: string;
 }
 
 export default function DateRangeSelector({
@@ -17,9 +18,11 @@ export default function DateRangeSelector({
   endDate,
   onStartDateChange,
   onEndDateChange,
+  minDate,
+  maxDate,
 }: DateRangeSelectorProps) {
-  const minDate = dayjs(appConfig.date.minDate);
-  const maxDate = dayjs(appConfig.date.maxDate);
+  const minDateObj = dayjs(minDate);
+  const maxDateObj = dayjs(maxDate);
 
   const handleStartDateChange = (newValue: Dayjs | null) => {
     if (newValue) {
@@ -43,7 +46,7 @@ export default function DateRangeSelector({
           label="Start Date"
           value={dayjs(startDate)}
           onChange={handleStartDateChange}
-          minDate={minDate}
+          minDate={minDateObj}
           maxDate={dayjs(endDate)}
           format="YYYY-MM-DD"
           slotProps={{
@@ -55,14 +58,14 @@ export default function DateRangeSelector({
           value={dayjs(endDate)}
           onChange={handleEndDateChange}
           minDate={dayjs(startDate)}
-          maxDate={maxDate}
+          maxDate={maxDateObj}
           format="YYYY-MM-DD"
           slotProps={{
             textField: { fullWidth: true, size: 'small' },
           }}
         />
         <Typography variant="caption" color="text.secondary">
-          Available data: {appConfig.date.minDate} to {appConfig.date.maxDate}
+          Available data: {minDate} to {maxDate}
         </Typography>
       </Stack>
     </Paper>
