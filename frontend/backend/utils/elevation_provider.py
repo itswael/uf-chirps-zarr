@@ -1,11 +1,14 @@
 """
 Elevation Data Utility
 Provides elevation data for specific coordinates using WELEV dataset
+Optimized with caching and fast interpolation for parallel processing
 """
 import logging
 from pathlib import Path
+from typing import Optional, Dict, Tuple, List
 import xarray as xr
-from typing import Optional
+import numpy as np
+from scipy.interpolate import RegularGridInterpolator
 
 from .nasa_power_config import nasa_power_config
 
@@ -13,7 +16,10 @@ logger = logging.getLogger(__name__)
 
 
 class ElevationProvider:
-    """Provide elevation data from WELEV dataset"""
+    """
+    Provide elevation data from WELEV dataset with caching and fast interpolation.
+    Optimized for parallel processing with multiple concurrent requests.
+    """
     
     def __init__(self, elevation_file_path: Optional[Path] = None):
         """
@@ -25,9 +31,22 @@ class ElevationProvider:
         self.elevation_file_path = elevation_file_path or nasa_power_config.ELEVATION_FILE_PATH
         self._dataset: Optional[xr.Dataset] = None
         self._loaded = False
+        
+        # Fast interpolation setup
+        self._interpolator: Optional[RegularGridInterpolator] = None
+        self._lats: Optional[np.ndarray] = None
+        self._lons: Optional[np.ndarray] = None
+        self._elevation_data: Optional[np.ndarray] = None
+        
+        # Cache for previously fetched elevations
+        # Key: (rounded_lat, rounded_lon), Value: elevation
+        # Rounding to 4 decimal places (~11m precision) reduces cache size
+        self._cache: Dict[Tuple[float, float], float] = {}
+        self._cache_hits = 0
+        self._cache_misses = 0
     
     def load(self):
-        """Load the elevation dataset"""
+        """Load the elevation dataset and prepare fast interpolator"""
         if self._loaded:
             return
         
@@ -39,17 +58,46 @@ class ElevationProvider:
                 )
                 return
             
+            # Load dataset
             self._dataset = xr.open_dataset(self.elevation_file_path)
+            
+            # Extract WELEV data and coordinates into numpy arrays for fast access
+            if 'WELEV' in self._dataset:
+                welev_data = self._dataset['WELEV']
+                
+                # Get coordinate arrays
+                self._lats = welev_data.coords['y'].values
+                self._lons = welev_data.coords['x'].values
+                self._elevation_data = welev_data.values
+                
+                # Create scipy interpolator (much faster than xarray.interp)
+                self._interpolator = RegularGridInterpolator(
+                    (self._lats, self._lons),
+                    self._elevation_data,
+                    method='linear',
+                    bounds_error=False,
+                    fill_value=nasa_power_config.DEFAULT_ELEVATION
+                )
+                
+                logger.info(
+                    f"Elevation dataset loaded with fast interpolator: "
+                    f"{self.elevation_file_path} "
+                    f"(shape: {self._elevation_data.shape})"
+                )
+            
             self._loaded = True
-            logger.info(f"Elevation dataset loaded: {self.elevation_file_path}")
             
         except Exception as e:
             logger.error(f"Error loading elevation dataset: {e}")
             # Don't raise - we'll use default elevation
     
+    def _round_coords(self, lat: float, lon: float) -> Tuple[float, float]:
+        """Round coordinates for cache key (4 decimal places = ~11m precision)"""
+        return (round(lat, 4), round(lon, 4))
+    
     def get_elevation(self, lat: float, lon: float) -> float:
         """
-        Get elevation for a specific latitude and longitude.
+        Get elevation for a specific latitude and longitude with caching.
         
         Args:
             lat: Latitude of the location
@@ -58,31 +106,111 @@ class ElevationProvider:
         Returns:
             Elevation in meters
         """
+        # Check cache first
+        cache_key = self._round_coords(lat, lon)
+        if cache_key in self._cache:
+            self._cache_hits += 1
+            return self._cache[cache_key]
+        
+        self._cache_misses += 1
+        
+        # Load dataset if not already loaded
         if not self._loaded:
             self.load()
         
-        if self._dataset is None or 'WELEV' not in self._dataset:
+        # If no interpolator available, use default
+        if self._interpolator is None:
             logger.debug(
                 f"Elevation data not available, using default: "
                 f"{nasa_power_config.DEFAULT_ELEVATION}"
             )
-            return nasa_power_config.DEFAULT_ELEVATION
+            elevation = nasa_power_config.DEFAULT_ELEVATION
+        else:
+            try:
+                # Use fast scipy interpolator
+                elevation = float(self._interpolator((lat, lon)))
+                elevation = round(elevation, 2)
+                
+            except Exception as e:
+                logger.warning(f"Error getting elevation for ({lat}, {lon}): {e}")
+                elevation = nasa_power_config.DEFAULT_ELEVATION
         
-        try:
-            welev_data = self._dataset['WELEV']
+        # Cache the result
+        self._cache[cache_key] = elevation
+        
+        # Log cache stats periodically (every 100 misses)
+        if self._cache_misses % 100 == 0:
+            total = self._cache_hits + self._cache_misses
+            hit_rate = (self._cache_hits / total * 100) if total > 0 else 0
+            logger.info(
+                f"Elevation cache stats: {self._cache_hits} hits, "
+                f"{self._cache_misses} misses ({hit_rate:.1f}% hit rate), "
+                f"cache size: {len(self._cache)}"
+            )
+        
+        return elevation
+    
+    def get_elevations_batch(self, coordinates: List[Tuple[float, float]]) -> List[float]:
+        """
+        Get elevations for multiple coordinates in batch (faster than individual calls).
+        
+        Args:
+            coordinates: List of (lat, lon) tuples
             
-            # Interpolate to exact coordinates using linear interpolation
-            # This matches the pythia_weather implementation
-            elevation = welev_data.interp(y=lat, x=lon, method='linear')
-            
-            elev_value = float(elevation.values.item())
-            
-            # Return rounded elevation
-            return round(elev_value, 2)
-            
-        except Exception as e:
-            logger.warning(f"Error getting elevation for ({lat}, {lon}): {e}")
-            return nasa_power_config.DEFAULT_ELEVATION
+        Returns:
+            List of elevations in meters
+        """
+        if not self._loaded:
+            self.load()
+        
+        # If no interpolator, return defaults
+        if self._interpolator is None:
+            return [nasa_power_config.DEFAULT_ELEVATION] * len(coordinates)
+        
+        elevations = []
+        uncached_indices = []
+        uncached_coords = []
+        
+        # Check cache for all coordinates
+        for i, (lat, lon) in enumerate(coordinates):
+            cache_key = self._round_coords(lat, lon)
+            if cache_key in self._cache:
+                elevations.append(self._cache[cache_key])
+                self._cache_hits += 1
+            else:
+                elevations.append(None)  # Placeholder
+                uncached_indices.append(i)
+                uncached_coords.append((lat, lon))
+                self._cache_misses += 1
+        
+        # Batch fetch uncached elevations
+        if uncached_coords:
+            try:
+                # Vectorized interpolation (much faster)
+                uncached_elevations = self._interpolator(uncached_coords)
+                uncached_elevations = np.round(uncached_elevations, 2)
+                
+                # Fill in results and update cache
+                for idx, elev, (lat, lon) in zip(uncached_indices, uncached_elevations, uncached_coords):
+                    elev_float = float(elev)
+                    elevations[idx] = elev_float
+                    cache_key = self._round_coords(lat, lon)
+                    self._cache[cache_key] = elev_float
+                    
+            except Exception as e:
+                logger.warning(f"Error in batch elevation fetch: {e}")
+                # Fill with defaults
+                for idx in uncached_indices:
+                    elevations[idx] = nasa_power_config.DEFAULT_ELEVATION
+        
+        return elevations
+    
+    def clear_cache(self):
+        """Clear the elevation cache"""
+        self._cache.clear()
+        self._cache_hits = 0
+        self._cache_misses = 0
+        logger.info("Elevation cache cleared")
     
     def close(self):
         """Close the elevation dataset"""
@@ -90,6 +218,10 @@ class ElevationProvider:
             self._dataset.close()
             self._dataset = None
         self._loaded = False
+        self._interpolator = None
+        self._elevation_data = None
+        self._lats = None
+        self._lons = None
 
 
 # Global elevation provider instance

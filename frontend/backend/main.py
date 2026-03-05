@@ -633,9 +633,9 @@ async def download_icasa_multi(
         ds = open_zarr()
         merger = WeatherDataMerger(ds)
         
-        # Generate weather package with enhanced generator
-        logger.info("Generating weather data package...")
-        batch_generator = EnhancedIcasaBatchGenerator()
+        # Generate weather package with enhanced generator (parallel processing)
+        logger.info("Generating weather data package with parallel processing...")
+        batch_generator = EnhancedIcasaBatchGenerator(max_workers=config.MAX_WORKERS)
         
         files = await batch_generator.generate_batch_from_merger(
             coordinates=valid_coords,
