@@ -2,7 +2,9 @@
 Enhanced ICASA Weather File Generator
 Creates ICASA format weather files with CHIRPS and NASA POWER data
 """
+import asyncio
 import logging
+import os
 from datetime import datetime
 from typing import Dict, List, Optional
 import io
@@ -160,11 +162,26 @@ class EnhancedIcasaGenerator:
 
 
 class EnhancedIcasaBatchGenerator:
-    """Generate multiple ICASA files efficiently with merged data"""
+    """Generate multiple ICASA files efficiently with merged data using parallel processing"""
     
-    def __init__(self):
-        """Initialize batch generator"""
+    def __init__(self, max_workers: Optional[int] = None):
+        """
+        Initialize batch generator with parallel processing support.
+        
+        Args:
+            max_workers: Maximum concurrent workers. If None, uses min(32, CPU count + 4)
+        """
         self.generator = EnhancedIcasaGenerator()
+        
+        # Determine optimal number of workers
+        if max_workers is None:
+            # Default: min(32, CPU count + 4) - balances performance and resource usage
+            cpu_count = os.cpu_count() or 4
+            self.max_workers = min(32, cpu_count + 4)
+        else:
+            self.max_workers = max_workers
+        
+        logger.info(f"Initialized batch generator with {self.max_workers} max workers")
     
     async def generate_batch_from_merger(
         self,
@@ -176,7 +193,7 @@ class EnhancedIcasaBatchGenerator:
         site_code: str = "UFLC"
     ) -> Dict[str, str]:
         """
-        Generate ICASA files for multiple coordinates using merged data.
+        Generate ICASA files for multiple coordinates using merged data in parallel.
         
         Args:
             coordinates: List of (lon, lat) tuples
@@ -189,9 +206,75 @@ class EnhancedIcasaBatchGenerator:
         Returns:
             Dictionary mapping filenames to file contents
         """
-        results = {}
+        total_points = len(coordinates)
+        logger.info(f"Starting parallel ICASA generation for {total_points} points with {self.max_workers} workers")
         
+        # Create semaphore to limit concurrent operations
+        semaphore = asyncio.Semaphore(self.max_workers)
+        
+        # Create tasks for all coordinates
+        tasks = []
         for i, (lon, lat) in enumerate(coordinates):
+            task = self._generate_single_point(
+                semaphore=semaphore,
+                point_id=i+1,
+                lon=lon,
+                lat=lat,
+                start_date=start_date,
+                end_date=end_date,
+                merger=merger,
+                rain_source=rain_source,
+                site_code=site_code,
+                total_points=total_points
+            )
+            tasks.append(task)
+        
+        # Execute all tasks in parallel with progress logging
+        results_list = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Collect successful results
+        results = {}
+        successful = 0
+        failed = 0
+        
+        for result in results_list:
+            if isinstance(result, Exception):
+                failed += 1
+                logger.error(f"Task failed with exception: {result}")
+            elif result is not None:
+                filename, content = result
+                results[filename] = content
+                successful += 1
+            else:
+                failed += 1
+        
+        logger.info(
+            f"Parallel ICASA generation complete: {successful} successful, "
+            f"{failed} failed out of {total_points} total"
+        )
+        
+        return results
+    
+    async def _generate_single_point(
+        self,
+        semaphore: asyncio.Semaphore,
+        point_id: int,
+        lon: float,
+        lat: float,
+        start_date: str,
+        end_date: str,
+        merger,
+        rain_source: str,
+        site_code: str,
+        total_points: int
+    ) -> Optional[tuple]:
+        """
+        Generate ICASA file for a single point with semaphore control.
+        
+        Returns:
+            Tuple of (filename, content) or None if failed
+        """
+        async with semaphore:
             try:
                 # Get merged data for this coordinate
                 df = await merger.merge_weather_data(
@@ -210,7 +293,7 @@ class EnhancedIcasaBatchGenerator:
                     lon=lon,
                     start_date=start_date,
                     end_date=end_date,
-                    point_id=i+1
+                    point_id=point_id
                 )
                 
                 # Generate ICASA content
@@ -223,16 +306,15 @@ class EnhancedIcasaBatchGenerator:
                     source_description=source_desc
                 )
                 
-                results[filename] = content
+                # Log progress periodically (every 10 points or on key milestones)
+                if point_id % 10 == 0 or point_id == total_points:
+                    logger.info(f"Progress: {point_id}/{total_points} points completed")
                 
-                logger.info(f"Generated ICASA file {i+1}/{len(coordinates)}: {filename}")
+                return (filename, content)
                 
             except Exception as e:
-                logger.error(f"Error generating ICASA file for point {i+1} ({lat}, {lon}): {e}")
-                # Continue with other points
-                continue
-        
-        return results
+                logger.error(f"Error generating ICASA file for point {point_id} ({lat}, {lon}): {e}")
+                return None
     
     def _get_source_description(self, rain_source: str) -> str:
         """Get source description based on rain source selection"""
