@@ -4,15 +4,19 @@ Fetches daily meteorological and solar data from NASA POWER S3 Zarr stores
 """
 import asyncio
 import logging
-import ssl
+import os
 from datetime import datetime, date
 from typing import Optional, Dict, Any, List
 import pandas as pd
 import xarray as xr
 import fsspec
+import certifi
 
 from .nasa_power_config import nasa_power_config
-from ..config import Config
+try:
+    from ..config import Config
+except ImportError:
+    from config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -37,25 +41,27 @@ class NasaPowerS3Fetcher:
             Opened xarray Dataset
         """
         try:
-            # Configure SSL settings for fsspec
-            client_kwargs = {}
-            
+            # Configure SSL settings for HTTP access (thread-safe)
             if not Config.NASA_POWER_VERIFY_SSL:
                 logger.warning(
                     "SSL certificate verification is DISABLED for NASA POWER S3 access. "
                     "This is not recommended for production use."
                 )
-                # Create SSL context that doesn't verify certificates
-                ssl_context = ssl.create_default_context()
-                ssl_context.check_hostname = False
-                ssl_context.verify_mode = ssl.CERT_NONE
-                client_kwargs['client_kwargs'] = {'verify': False}
+                os.environ["PYTHONHTTPSVERIFY"] = "0"
             elif Config.NASA_POWER_SSL_CERT_PATH:
                 logger.info(f"Using custom SSL certificate: {Config.NASA_POWER_SSL_CERT_PATH}")
-                client_kwargs['client_kwargs'] = {'verify': Config.NASA_POWER_SSL_CERT_PATH}
+                os.environ["SSL_CERT_FILE"] = Config.NASA_POWER_SSL_CERT_PATH
+                os.environ["REQUESTS_CA_BUNDLE"] = Config.NASA_POWER_SSL_CERT_PATH
+            else:
+                # Use certifi CA bundle by default (helps on macOS environments
+                # with incomplete system certificate chains)
+                cert_path = certifi.where()
+                logger.info(f"Using certifi CA bundle for SSL verification: {cert_path}")
+                os.environ["SSL_CERT_FILE"] = cert_path
+                os.environ["REQUESTS_CA_BUNDLE"] = cert_path
             
             # Open Zarr store with configured SSL settings
-            store = fsspec.get_mapper(zarr_url, **client_kwargs)
+            store = fsspec.get_mapper(zarr_url)
             ds = xr.open_zarr(store, consolidated=True)
             logger.info(f"Successfully opened Zarr store: {zarr_url}")
             return ds
