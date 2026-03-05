@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Paper,
   Box,
@@ -8,6 +8,11 @@ import {
   ToggleButton,
   ToggleButtonGroup,
   CircularProgress,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  SelectChangeEvent,
 } from '@mui/material';
 import {
   XAxis,
@@ -18,14 +23,19 @@ import {
   ResponsiveContainer,
   BarChart,
   Bar,
+  LineChart,
+  Line,
 } from 'recharts';
 import appConfig from '@/config/app.config';
 
 interface ChartData {
   time: string[];
-  precipitation: (number | null)[];
+  precipitation?: (number | null)[];
+  values?: (number | null)[];
+  variable?: string;
   units: string;
   aggregation: string;
+  description?: string;
 }
 
 interface PrecipitationChartProps {
@@ -33,6 +43,9 @@ interface PrecipitationChartProps {
   loading: boolean;
   aggregation: string;
   onAggregationChange: (aggregation: string) => void;
+  selectedVariable?: string;
+  onVariableChange?: (variable: string) => void;
+  availableVariables?: any;
 }
 
 export default function PrecipitationChart({
@@ -40,6 +53,9 @@ export default function PrecipitationChart({
   loading,
   aggregation,
   onAggregationChange,
+  selectedVariable = 'RAIN1',
+  onVariableChange,
+  availableVariables,
 }: PrecipitationChartProps) {
   const handleAggregationChange = (
     event: React.MouseEvent<HTMLElement>,
@@ -50,34 +66,97 @@ export default function PrecipitationChart({
     }
   };
 
+  const handleVariableChange = (event: SelectChangeEvent) => {
+    if (onVariableChange) {
+      onVariableChange(event.target.value);
+    }
+  };
+
   // Transform data for Recharts
   const chartData = data
     ? data.time.map((time, index) => ({
         date: formatDate(time, aggregation),
-        precipitation: data.precipitation[index],
+        value: data.values ? data.values[index] : data.precipitation?.[index],
       }))
     : [];
 
+  // Determine if we should use bar or line chart
+  const useLineChart = selectedVariable !== 'RAIN1' && selectedVariable !== 'RAIN2' && selectedVariable !== 'RAIN';
+  
+  // Get display name and color for variable
+  const getVariableDisplay = () => {
+    if (!selectedVariable || !availableVariables) {
+      return { name: 'Precipitation', color: appConfig.visualization.colors.precipitation };
+    }
+    
+    const varInfo = availableVariables[selectedVariable];
+    if (!varInfo) {
+      return { name: selectedVariable, color: appConfig.visualization.colors.precipitation };
+    }
+    
+    // Map variables to colors
+    const colorMap: { [key: string]: string } = {
+      'RAIN1': '#2196f3',
+      'RAIN2': '#1976d2', 
+      'TMAX': '#f44336',
+      'TMIN': '#2196f3',
+      'T2M': '#ff9800',
+      'SRAD': '#ffc107',
+      'WIND': '#9c27b0',
+      'TDEW': '#00bcd4',
+      'RH2M': '#4caf50',
+    };
+    
+    return {
+      name: varInfo.description || selectedVariable,
+      color: colorMap[selectedVariable] || appConfig.visualization.colors.precipitation
+    };
+  };
+
+  const { name: variableName, color: variableColor } = getVariableDisplay();
+
   return (
     <Paper elevation={3} sx={{ p: 2, height: '100%' }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Typography variant="h6">Precipitation Time Series</Typography>
-        <ToggleButtonGroup
-          value={aggregation}
-          exclusive
-          onChange={handleAggregationChange}
-          size="small"
-          aria-label="aggregation level"
-        >
-          {appConfig.visualization.aggregationLevels.map((level) => (
-            <ToggleButton key={level.value} value={level.value} aria-label={level.label}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                <span>{level.icon}</span>
-                <span>{level.label}</span>
-              </Box>
-            </ToggleButton>
-          ))}
-        </ToggleButtonGroup>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 1 }}>
+        <Typography variant="h6">Weather Data Time Series</Typography>
+        
+        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
+          {/* Variable Selector */}
+          {availableVariables && Object.keys(availableVariables).length > 0 && (
+            <FormControl size="small" sx={{ minWidth: 180 }}>
+              <InputLabel>Variable</InputLabel>
+              <Select
+                value={selectedVariable}
+                onChange={handleVariableChange}
+                label="Variable"
+              >
+                {Object.keys(availableVariables).map((varCode) => (
+                  <MenuItem key={varCode} value={varCode}>
+                    {availableVariables[varCode].description || varCode}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          )}
+          
+          {/* Aggregation Selector */}
+          <ToggleButtonGroup
+            value={aggregation}
+            exclusive
+            onChange={handleAggregationChange}
+            size="small"
+            aria-label="aggregation level"
+          >
+            {appConfig.visualization.aggregationLevels.map((level) => (
+              <ToggleButton key={level.value} value={level.value} aria-label={level.label}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <span>{level.icon}</span>
+                  <span>{level.label}</span>
+                </Box>
+              </ToggleButton>
+            ))}
+          </ToggleButtonGroup>
+        </Box>
       </Box>
 
       {loading ? (
@@ -93,35 +172,70 @@ export default function PrecipitationChart({
         </Box>
       ) : data && chartData.length > 0 ? (
         <ResponsiveContainer width="100%" height={appConfig.visualization.chart.height}>
-          <BarChart
-            data={chartData}
-            margin={appConfig.visualization.chart.margin}
-          >
-            <CartesianGrid strokeDasharray="3 3" stroke={appConfig.visualization.colors.gridLines} />
-            <XAxis
-              dataKey="date"
-              tick={{ fontSize: 12 }}
-              angle={-45}
-              textAnchor="end"
-              height={80}
-            />
-            <YAxis
-              label={{ value: data.units, angle: -90, position: 'insideLeft' }}
-              tick={{ fontSize: 12 }}
-            />
-            <Tooltip
-              contentStyle={{
-                backgroundColor: 'rgba(255, 255, 255, 0.95)',
-                border: '1px solid #ccc',
-              }}
-            />
-            <Legend />
-            <Bar
-              dataKey="precipitation"
-              fill={appConfig.visualization.colors.precipitation}
-              name="Precipitation"
-            />
-          </BarChart>
+          {useLineChart ? (
+            <LineChart
+              data={chartData}
+              margin={appConfig.visualization.chart.margin}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke={appConfig.visualization.colors.gridLines} />
+              <XAxis
+                dataKey="date"
+                tick={{ fontSize: 12 }}
+                angle={-45}
+                textAnchor="end"
+                height={80}
+              />
+              <YAxis
+                label={{ value: data.units, angle: -90, position: 'insideLeft' }}
+                tick={{ fontSize: 12 }}
+              />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                  border: '1px solid #ccc',
+                }}
+              />
+              <Legend />
+              <Line
+                type="monotone"
+                dataKey="value"
+                stroke={variableColor}
+                strokeWidth={2}
+                dot={{ r: 3 }}
+                name={variableName}
+              />
+            </LineChart>
+          ) : (
+            <BarChart
+              data={chartData}
+              margin={appConfig.visualization.chart.margin}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke={appConfig.visualization.colors.gridLines} />
+              <XAxis
+                dataKey="date"
+                tick={{ fontSize: 12 }}
+                angle={-45}
+                textAnchor="end"
+                height={80}
+              />
+              <YAxis
+                label={{ value: data.units, angle: -90, position: 'insideLeft' }}
+                tick={{ fontSize: 12 }}
+              />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                  border: '1px solid #ccc',
+                }}
+              />
+              <Legend />
+              <Bar
+                dataKey="value"
+                fill={variableColor}
+                name={variableName}
+              />
+            </BarChart>
+          )}
         </ResponsiveContainer>
       ) : (
         <Box
@@ -133,7 +247,7 @@ export default function PrecipitationChart({
           }}
         >
           <Typography variant="body1" color="text.secondary">
-            Select a location on the map to view precipitation data
+            Select a location on the map to view weather data
           </Typography>
         </Box>
       )}
