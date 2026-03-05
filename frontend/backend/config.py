@@ -22,8 +22,10 @@ class Config:
     # Number of coordinates to process in each batch
     BATCH_SIZE: int = int(os.getenv("BATCH_SIZE", "50"))
     
-    # Maximum concurrent workers for async processing
-    # None = use default (min(32, CPU count + 4))
+    # Maximum concurrent workers for parallel ICASA generation
+    # None = auto-detect (min(32, CPU count + 4) - recommended for best performance)
+    # Set to specific number to limit resource usage (e.g., 10, 16, 20)
+    # Higher values = faster processing but more memory/CPU usage
     MAX_WORKERS: Optional[int] = None
     _max_workers_env = os.getenv("MAX_WORKERS")
     if _max_workers_env is not None and _max_workers_env.strip():
