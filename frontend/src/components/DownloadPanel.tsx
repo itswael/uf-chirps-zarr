@@ -19,6 +19,11 @@ import {
   IconButton,
   Tooltip,
   CircularProgress,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  SelectChangeEvent,
 } from '@mui/material';
 import {
   Download,
@@ -41,6 +46,9 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
   const [downloading, setDownloading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // Rain source selection
+  const [rainSource, setRainSource] = useState<string>('both');
 
   // Multi-point download state
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -53,6 +61,10 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
     // Reset errors when switching tabs
     setError(null);
     setValidationError(null);
+  };
+
+  const handleRainSourceChange = (event: SelectChangeEvent) => {
+    setRainSource(event.target.value);
   };
 
   const handleSingleDownload = async () => {
@@ -70,6 +82,7 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
         lon: location.lon,
         start_date: startDate,
         end_date: endDate,
+        rain_source: rainSource,
       });
       setSuccess(true);
     } catch (err: any) {
@@ -131,6 +144,7 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
         file: selectedFile,
         start_date: startDate,
         end_date: endDate,
+        rain_source: rainSource,
       });
       setSuccess(true);
     } catch (err: any) {
@@ -194,7 +208,36 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
                 />
               </Stack>
             </Box>
+{/* Rain Data Source Selector */}
+            <FormControl fullWidth size="small">
+              <InputLabel>Rain Data Source</InputLabel>
+              <Select
+                value={rainSource}
+                onChange={handleRainSourceChange}
+                label="Rain Data Source"
+              >
+                <MenuItem value="chirps">CHIRPS Only</MenuItem>
+                <MenuItem value="nasa_power">NASA POWER Only</MenuItem>
+                <MenuItem value="both">Both (CHIRPS + NASA POWER)</MenuItem>
+              </Select>
+            </FormControl>
 
+            <Alert severity="info" sx={{ fontSize: '0.875rem' }}>
+              <Typography variant="caption" display="block" gutterBottom>
+                <strong>Rain Data Source Options:</strong>
+              </Typography>
+              <Typography variant="caption" display="block">
+                • <strong>CHIRPS Only:</strong> Rain from CHIRPS (0.05° resolution), other variables from NASA POWER
+              </Typography>
+              <Typography variant="caption" display="block">
+                • <strong>NASA POWER Only:</strong> All data from NASA POWER (0.5° resolution)
+              </Typography>
+              <Typography variant="caption" display="block">
+                • <strong>Both:</strong> Includes both RAIN1 (CHIRPS) and RAIN2 (NASA POWER) in the file
+              </Typography>
+            </Alert>
+
+            
             <Alert severity="info" sx={{ fontSize: '0.875rem' }}>
               <Typography variant="caption" display="block" gutterBottom>
                 <strong>ICASA Format Details:</strong>

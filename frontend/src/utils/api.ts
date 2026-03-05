@@ -26,6 +26,14 @@ class ApiClient {
   }
 
   /**
+   * Get available weather variables
+   */
+  async getVariables() {
+    const response = await this.client.get('/api/variables');
+    return response.data;
+  }
+
+  /**
    * Get time series data for a location
    */
   async getTimeSeries(params: {
@@ -42,6 +50,23 @@ class ApiClient {
     aggregation?: string;
   }) {
     const response = await this.client.post('/api/data/timeseries', params);
+    return response.data;
+  }
+
+  /**
+   * Get time series for a specific variable (CHIRPS or NASA POWER)
+   */
+  async getTimeSeriesVariable(params: {
+    lat: number;
+    lon: number;
+    start_date: string;
+    end_date: string;
+    variable: string;
+    aggregation?: string;
+  }) {
+    const response = await this.client.post('/api/data/timeseries-variable', null, {
+      params,
+    });
     return response.data;
   }
 
@@ -88,6 +113,7 @@ class ApiClient {
     lon: number;
     start_date: string;
     end_date: string;
+    rain_source?: string;
   }) {
     const response = await this.client.post('/api/download/icasa', null, {
       params,
@@ -100,7 +126,7 @@ class ApiClient {
     link.href = url;
     link.setAttribute(
       'download',
-      `weather_${params.lat}_${params.lon}_${params.start_date}_${params.end_date}.txt`
+      `weather_${params.lat}_${params.lon}_${params.start_date}_${params.end_date}.WTH`
     );
     document.body.appendChild(link);
     link.click();
@@ -133,11 +159,13 @@ class ApiClient {
     file: File;
     start_date: string;
     end_date: string;
+    rain_source?: string;
   }) {
     const formData = new FormData();
     formData.append('shapefile', params.file);
     formData.append('start_date', params.start_date);
     formData.append('end_date', params.end_date);
+    formData.append('rain_source', params.rain_source || 'both');
 
     const response = await this.client.post('/api/download/icasa-multi', formData, {
       headers: {

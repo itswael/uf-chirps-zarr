@@ -39,6 +39,8 @@ export default function Home() {
   // State
   const [location, setLocation] = useState<{ lat: number; lon: number; zoom: number } | null>(null);
   const [metadata, setMetadata] = useState<any>(null);
+  const [availableVariables, setAvailableVariables] = useState<any>(null);
+  const [selectedVariable, setSelectedVariable] = useState<string>('RAIN1');
   const [startDate, setStartDate] = useState(appConfig.date.defaultStartDate);
   const [endDate, setEndDate] = useState(appConfig.date.defaultEndDate);
   const [aggregation, setAggregation] = useState(appConfig.visualization.defaultAggregation);
@@ -54,7 +56,7 @@ export default function Home() {
   const [statsLoading, setStatsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch metadata on mount
+  // Fetch metadata and variables on mount
   useEffect(() => {
     const fetchMetadata = async () => {
       try {
@@ -75,6 +77,13 @@ export default function Home() {
         
         setEndDate(defaultEnd);
         setStartDate(startDateStr);
+        
+        // Fetch available variables if NASA POWER is enabled
+        if (meta.nasa_power_enabled) {
+          const varsData = await apiClient.getVariables();
+          setAvailableVariables(varsData.variables);
+          setSelectedVariable(varsData.default_plot_variable || 'RAIN1');
+        }
       } catch (err) {
         console.error('Error fetching metadata:', err);
       }
@@ -82,12 +91,12 @@ export default function Home() {
     fetchMetadata();
   }, []);
 
-  // Fetch data when location, dates, or aggregation changes
+  // Fetch data when location, dates, aggregation, or variable changes
   useEffect(() => {
     if (location) {
       fetchData();
     }
-  }, [location, startDate, endDate, aggregation]);
+  }, [location, startDate, endDate, aggregation, selectedVariable]);
 
   const fetchData = async () => {
     if (!location) return;
@@ -97,39 +106,47 @@ export default function Home() {
     setError(null);
 
     try {
-      // Calculate spatial extent based on zoom level
-      const resolution = appConfig.map.zoomToResolution[location.zoom as keyof typeof appConfig.map.zoomToResolution] || 0.5;
-      const extent = resolution / 2;
-
-      const bounds = {
-        lon_min: location.lon - extent,
-        lon_max: location.lon + extent,
-        lat_min: location.lat - extent,
-        lat_max: location.lat + extent,
-      };
-
-      const dateRange = {
+      // Fetch variable-specific time series data
+      const timeSeriesData = await apiClient.getTimeSeriesVariable({
+        lat: location.lat,
+        lon: location.lon,
         start_date: startDate,
         end_date: endDate,
-      };
-
-      // Fetch time series data
-      const timeSeriesPromise = apiClient.getTimeSeries({
-        bounds,
-        date_range: dateRange,
-        aggregation,
+        variable: selectedVariable,
+        aggregation: aggregation === 'daily' ? undefined : aggregation,
       });
-
-      // Fetch statistics
-      const statsPromise = apiClient.getStatistics({
-        bounds,
-        date_range: dateRange,
-      });
-
-      const [timeSeriesData, statsData] = await Promise.all([timeSeriesPromise, statsPromise]);
 
       setChartData(timeSeriesData);
-      setStatistics(statsData);
+      
+      // For statistics, still use RAIN1 (CHIRPS precipitation)
+      // as it's the most relevant for agricultural applications
+      if (selectedVariable === 'RAIN1') {
+        // Calculate spatial extent based on zoom level
+        const resolution = appConfig.map.zoomToResolution[location.zoom as keyof typeof appConfig.map.zoomToResolution] || 0.5;
+        const extent = resolution / 2;
+
+        const bounds = {
+          lon_min: location.lon - extent,
+          lon_max: location.lon + extent,
+          lat_min: location.lat - extent,
+          lat_max: location.lat + extent,
+        };
+
+        const dateRange = {
+          start_date: startDate,
+          end_date: endDate,
+        };
+
+        const statsData = await apiClient.getStatistics({
+          bounds,
+          date_range: dateRange,
+        });
+
+        setStatistics(statsData);
+      } else {
+        // For non-precipitation variables, clear statistics
+        setStatistics(null);
+      }
     } catch (err: any) {
       console.error('Error fetching data:', err);
       setError(err.response?.data?.detail || err.message || 'Failed to fetch data');
@@ -338,6 +355,9 @@ export default function Home() {
                   loading={loading}
                   aggregation={aggregation}
                   onAggregationChange={setAggregation}
+                  selectedVariable={selectedVariable}
+                  onVariableChange={setSelectedVariable}
+                  availableVariables={availableVariables}
                 />
               </Grid>
             </Grid>
