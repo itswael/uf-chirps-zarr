@@ -8,3 +8,7 @@ python-multipart==0.0.12
 pydantic==2.9.2
 geopandas
 shapely
+pandas>=2.0.0
+fsspec>=2023.1.0
+s3fs>=2023.1.0
+netCDF4>=1.6.0

@@ -1,6 +1,7 @@
 """
 FastAPI Backend for CHIRPS Precipitation Data Visualization
 Provides API endpoints for the Next.js frontend
+Now includes NASA POWER meteorological data integration
 """
 from datetime import datetime
 from pathlib import Path
@@ -11,6 +12,7 @@ import tempfile
 import shutil
 
 import numpy as np
+import pandas as pd
 import xarray as xr
 from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,6 +27,12 @@ from config import config
 from utils.shapefile_processor import ShapefileProcessor
 from utils.icasa_generator import IcasaWeatherGenerator
 from utils.async_processor import generate_weather_package
+
+# Import NASA POWER utilities
+from utils.nasa_power_fetcher import get_fetcher
+from utils.weather_data_merger import WeatherDataMerger
+from utils.enhanced_icasa_generator import EnhancedIcasaGenerator, EnhancedIcasaBatchGenerator
+from utils.nasa_power_config import nasa_power_config
 
 # Configure logging
 logging.basicConfig(
@@ -61,6 +69,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Startup event to initialize NASA POWER data
+@app.on_event("startup")
+async def startup_event():
+    """Initialize NASA POWER datasets on startup"""
+    if config.ENABLE_NASA_POWER:
+        logger.info("Initializing NASA POWER data fetcher...")
+        try:
+            fetcher = get_fetcher()
+            await fetcher.load_datasets()
+            logger.info("NASA POWER data fetcher initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize NASA POWER fetcher: {e}")
+            logger.warning("NASA POWER features will be disabled")
+
 
 # Helper function to open dataset
 def open_zarr():
@@ -121,7 +145,7 @@ async def get_metadata():
         lat_values = ds.latitude.values
         lon_values = ds.longitude.values
         
-        return {
+        metadata = {
             "time_range": {
                 "start": str(time_values[0]),
                 "end": str(time_values[-1]),
@@ -141,6 +165,62 @@ async def get_metadata():
             },
             "variables": list(ds.data_vars),
             "dimensions": dict(ds.dims)
+        }
+        
+        # Add NASA POWER metadata if enabled
+        if config.ENABLE_NASA_POWER:
+            try:
+                fetcher = get_fetcher()
+                nasa_meta = await fetcher.get_metadata()
+                metadata['nasa_power'] = nasa_meta
+                metadata['nasa_power_enabled'] = True
+                metadata['available_variables'] = config.AVAILABLE_PLOT_VARIABLES
+                metadata['default_plot_variable'] = config.DEFAULT_PLOT_VARIABLE
+                metadata['rain_sources'] = ['chirps', 'nasa_power', 'both']
+                metadata['default_rain_source'] = config.DEFAULT_RAIN_SOURCE
+            except Exception as e:
+                logger.warning(f"Could not fetch NASA POWER metadata: {e}")
+                metadata['nasa_power_enabled'] = False
+        else:
+            metadata['nasa_power_enabled'] = False
+        
+        return metadata
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/variables")
+async def get_available_variables():
+    """Get list of available weather variables with descriptions"""
+    try:
+        variables = {}
+        
+        # Add CHIRPS variable
+        variables['RAIN1'] = {
+            'code': 'RAIN1',
+            'description': 'Precipitation from CHIRPS',
+            'units': 'mm/day',
+            'source': 'CHIRPS',
+            'available_for_plot': True
+        }
+        
+        # Add NASA POWER variables if enabled
+        if config.ENABLE_NASA_POWER:
+            for var_code in config.AVAILABLE_PLOT_VARIABLES:
+                if var_code != 'RAIN1':
+                    var_config = nasa_power_config.get_variable_config(var_code)
+                    if var_config:
+                        variables[var_code] = {
+                            'code': var_code,
+                            'description': var_config['description'],
+                            'units': var_config['units'],
+                            'source': var_config['source'],
+                            'available_for_plot': True
+                        }
+        
+        return {
+            'variables': variables,
+            'default_plot_variable': config.DEFAULT_PLOT_VARIABLE
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -207,6 +287,94 @@ async def get_timeseries(request: DataRequest):
             "aggregation": request.aggregation or "daily"
         }
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/data/timeseries-variable")
+async def get_timeseries_variable(
+    lat: float = Query(...),
+    lon: float = Query(...),
+    start_date: str = Query(...),
+    end_date: str = Query(...),
+    variable: str = Query(..., description="Variable code (RAIN1, TMAX, TMIN, etc.)"),
+    aggregation: Optional[str] = Query(None, description="daily, weekly, monthly, yearly")
+):
+    """Get time series for any weather variable (CHIRPS or NASA POWER)"""
+    try:
+        # Validate variable
+        if variable not in config.AVAILABLE_PLOT_VARIABLES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid variable: {variable}. Available: {config.AVAILABLE_PLOT_VARIABLES}"
+            )
+        
+        ds = open_zarr()
+        merger = WeatherDataMerger(ds)
+        
+        # Get merged data
+        df = await merger.merge_weather_data(
+            lat=lat,
+            lon=lon,
+            start_date=start_date,
+            end_date=end_date,
+            rain_source="both",  # Get all data
+            include_solar=True,
+            include_met=True
+        )
+        
+        # Check if variable exists in data
+        if variable not in df.columns:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Variable {variable} not available in data"
+            )
+        
+        # Apply aggregation if requested
+        if aggregation and aggregation != 'daily':
+            df['time'] = pd.to_datetime(df['time'])
+            df = df.set_index('time')
+            
+            if aggregation == 'weekly':
+                df = df.resample('W').mean()
+            elif aggregation == 'monthly':
+                df = df.resample('ME').mean()
+            elif aggregation == 'yearly':
+                df = df.resample('YE').mean()
+            
+            df = df.reset_index()
+        
+        # Get variable metadata
+        var_config = nasa_power_config.get_variable_config(variable)
+        if variable == 'RAIN1':
+            units = 'mm/day'
+            description = 'CHIRPS Precipitation'
+        elif var_config:
+            units = var_config['units']
+            description = var_config['description']
+        else:
+            units = 'unknown'
+            description = variable
+        
+        # Convert to JSON format
+        time_values = [str(t) for t in df['time']]
+        var_values = [
+            float(v) if not pd.isna(v) else None
+            for v in df[variable]
+        ]
+        
+        return {
+            "time": time_values,
+            "values": var_values,
+            "variable": variable,
+            "units": units,
+            "description": description,
+            "aggregation": aggregation or "daily"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching variable time series: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -328,25 +496,54 @@ async def download_icasa(
     lat: float = Query(...),
     lon: float = Query(...),
     start_date: str = Query(...),
-    end_date: str = Query(...)
+    end_date: str = Query(...),
+    rain_source: str = Query("both", description="Rain data source: chirps, nasa_power, or both")
 ):
-    """Download precipitation data in ICASA format for a single location"""
+    """
+    Download weather data in ICASA format for a single location.
+    Includes CHIRPS precipitation and NASA POWER meteorological data.
+    """
     try:
-        ds = open_zarr()
+        # Validate rain source
+        if rain_source not in ['chirps', 'nasa_power', 'both']:
+            raise HTTPException(
+                status_code=400,
+                detail="rain_source must be one of: chirps, nasa_power, both"
+            )
         
-        # Use the ICASA generator for consistency
-        generator = IcasaWeatherGenerator(ds)
-        content = generator.generate_icasa_file(
+        ds = open_zarr()
+        merger = WeatherDataMerger(ds)
+        
+        # Get merged data
+        df = await merger.merge_weather_data(
             lat=lat,
             lon=lon,
             start_date=start_date,
             end_date=end_date,
-            variables=config.DEFAULT_VARIABLES,
-            site_code=config.DEFAULT_SITE_CODE
+            rain_source=rain_source,
+            include_solar=True,
+            include_met=True
         )
         
-        # Create response
-        filename = IcasaWeatherGenerator.create_filename(
+        # Generate ICASA file using enhanced generator
+        generator = EnhancedIcasaGenerator()
+        
+        source_desc = "CHIRPS + NASA POWER"
+        if rain_source == "chirps":
+            source_desc = "CHIRPS + NASA POWER (Rain: CHIRPS)"
+        elif rain_source == "nasa_power":
+            source_desc = "NASA POWER"
+        
+        content = generator.generate_icasa_content(
+            df=df,
+            lat=lat,
+            lon=lon,
+            site_code=config.DEFAULT_SITE_CODE,
+            source_description=source_desc
+        )
+        
+        # Create filename
+        filename = generator.create_filename(
             lat=lat,
             lon=lon,
             start_date=start_date,
@@ -358,6 +555,9 @@ async def download_icasa(
             media_type="text/plain",
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
+        
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error generating ICASA file: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -367,11 +567,12 @@ async def download_icasa(
 async def download_icasa_multi(
     shapefile: UploadFile = File(..., description="Shapefile (.shp)"),
     start_date: str = Form(...),
-    end_date: str = Form(...)
+    end_date: str = Form(...),
+    rain_source: str = Form("both", description="Rain data source: chirps, nasa_power, or both")
 ):
     """
     Download ICASA weather data for multiple points from a shapefile.
-    Extracts all points from the shapefile and creates one ICASA file per point.
+    Includes CHIRPS and NASA POWER data with configurable rain source.
     Returns a zip file containing individual ICASA files for each coordinate.
     
     Note: Only the .shp file is required. Missing .shx and .dbf files will be auto-generated.
@@ -379,6 +580,13 @@ async def download_icasa_multi(
     temp_dir = None
     
     try:
+        # Validate rain source
+        if rain_source not in ['chirps', 'nasa_power', 'both']:
+            raise HTTPException(
+                status_code=400,
+                detail="rain_source must be one of: chirps, nasa_power, both"
+            )
+        
         # Read uploaded file
         shp_content = await shapefile.read()
         
@@ -421,30 +629,53 @@ async def download_icasa_multi(
                 detail="No valid coordinates found in shapefile"
             )
         
-        # Open dataset
+        # Open CHIRPS dataset
         ds = open_zarr()
+        merger = WeatherDataMerger(ds)
         
-        # Generate weather package
+        # Generate weather package with enhanced generator
         logger.info("Generating weather data package...")
-        zip_content = await generate_weather_package(
-            dataset=ds,
+        batch_generator = EnhancedIcasaBatchGenerator()
+        
+        files = await batch_generator.generate_batch_from_merger(
             coordinates=valid_coords,
             start_date=start_date,
             end_date=end_date,
-            variables=config.DEFAULT_VARIABLES,
-            max_workers=config.MAX_WORKERS,
-            batch_size=config.BATCH_SIZE
+            merger=merger,
+            rain_source=rain_source,
+            site_code=config.DEFAULT_SITE_CODE
         )
         
-        logger.info(f"Successfully generated package with {len(valid_coords)} files")
+        # Create zip file
+        from utils.async_processor import ZipFileBuilder
+        
+        source_desc = "CHIRPS + NASA POWER"
+        if rain_source == "chirps":
+            source_desc = "CHIRPS + NASA POWER (Rain: CHIRPS)"
+        elif rain_source == "nasa_power":
+            source_desc = "NASA POWER"
+        
+        zip_content = ZipFileBuilder.create_zip_archive(
+            files=files,
+            include_readme=True,
+            metadata={
+                'start_date': start_date,
+                'end_date': end_date,
+                'total_points': len(valid_coords),
+                'data_source': source_desc,
+                'rain_source': rain_source
+            }
+        )
+        
+        logger.info(f"Successfully generated package with {len(files)} files")
         
         # Create response
-        filename = f"weather_data_{start_date}_{end_date}.zip"
+        zip_filename = f"weather_data_{start_date}_{end_date}.zip"
         
         return StreamingResponse(
             io.BytesIO(zip_content),
             media_type="application/zip",
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
+            headers={"Content-Disposition": f"attachment; filename={zip_filename}"}
         )
         
     except HTTPException:
