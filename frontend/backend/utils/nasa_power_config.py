@@ -172,7 +172,7 @@ class NasaPowerConfig:
     
     # ==================== Elevation Data ====================
     # Path to elevation data file (relative to backend directory)
-    ELEVATION_FILE_PATH = Path(__file__).resolve().parent.parent.parent.parent / "pythia_weather" / "welev_merra2_grid.nc"
+    ELEVATION_FILE_PATH = Path(__file__).resolve().parent.parent / "welev_merra2_grid.nc"
     
     @classmethod
     def get_available_variables(cls) -> List[str]:
