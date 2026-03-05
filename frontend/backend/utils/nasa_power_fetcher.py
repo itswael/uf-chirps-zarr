@@ -4,6 +4,7 @@ Fetches daily meteorological and solar data from NASA POWER S3 Zarr stores
 """
 import asyncio
 import logging
+import ssl
 from datetime import datetime, date
 from typing import Optional, Dict, Any, List
 import pandas as pd
@@ -11,6 +12,7 @@ import xarray as xr
 import fsspec
 
 from .nasa_power_config import nasa_power_config
+from ..config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +37,25 @@ class NasaPowerS3Fetcher:
             Opened xarray Dataset
         """
         try:
-            store = fsspec.get_mapper(zarr_url)
+            # Configure SSL settings for fsspec
+            client_kwargs = {}
+            
+            if not Config.NASA_POWER_VERIFY_SSL:
+                logger.warning(
+                    "SSL certificate verification is DISABLED for NASA POWER S3 access. "
+                    "This is not recommended for production use."
+                )
+                # Create SSL context that doesn't verify certificates
+                ssl_context = ssl.create_default_context()
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl.CERT_NONE
+                client_kwargs['client_kwargs'] = {'verify': False}
+            elif Config.NASA_POWER_SSL_CERT_PATH:
+                logger.info(f"Using custom SSL certificate: {Config.NASA_POWER_SSL_CERT_PATH}")
+                client_kwargs['client_kwargs'] = {'verify': Config.NASA_POWER_SSL_CERT_PATH}
+            
+            # Open Zarr store with configured SSL settings
+            store = fsspec.get_mapper(zarr_url, **client_kwargs)
             ds = xr.open_zarr(store, consolidated=True)
             logger.info(f"Successfully opened Zarr store: {zarr_url}")
             return ds

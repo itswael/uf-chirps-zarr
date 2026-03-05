@@ -82,6 +82,15 @@ class Config:
     # Default plot variable (CHIRPS rain for backward compatibility)
     DEFAULT_PLOT_VARIABLE: str = os.getenv("DEFAULT_PLOT_VARIABLE", "RAIN1")
     
+    # SSL Certificate Verification for NASA POWER S3 access
+    # Set to False to disable SSL verification (not recommended for production)
+    # Use this only if you're experiencing SSL certificate issues on macOS
+    NASA_POWER_VERIFY_SSL: bool = os.getenv("NASA_POWER_VERIFY_SSL", "true").lower() == "true"
+    
+    # Custom SSL certificate bundle path (optional)
+    # Set this if you need to use a custom CA bundle
+    NASA_POWER_SSL_CERT_PATH: Optional[str] = os.getenv("NASA_POWER_SSL_CERT_PATH")
+    
     # ==================== Validation Settings ====================
     # Valid latitude range
     LAT_BOUNDS: tuple = (-90.0, 90.0)
