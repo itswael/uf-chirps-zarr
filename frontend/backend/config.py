@@ -59,6 +59,29 @@ class Config:
     # Value precision for weather variables (decimal places)
     VALUE_PRECISION: int = int(os.getenv("VALUE_PRECISION", "1"))
     
+    # ==================== NASA POWER Settings ====================
+    # Enable NASA POWER data integration
+    ENABLE_NASA_POWER: bool = os.getenv("ENABLE_NASA_POWER", "true").lower() == "true"
+    
+    # Default rain data source: "chirps", "nasa_power", or "both"
+    DEFAULT_RAIN_SOURCE: str = os.getenv("DEFAULT_RAIN_SOURCE", "both")
+    
+    # Available weather variables for plotting
+    AVAILABLE_PLOT_VARIABLES: list = [
+        "RAIN1",     # CHIRPS Precipitation
+        "RAIN2",     # NASA POWER Precipitation
+        "TMAX",      # Maximum Temperature
+        "TMIN",      # Minimum Temperature
+        "T2M",       # Average Temperature
+        "SRAD",      # Solar Radiation
+        "WIND",      # Wind Speed
+        "TDEW",      # Dew Point Temperature
+        "RH2M"       # Relative Humidity
+    ]
+    
+    # Default plot variable (CHIRPS rain for backward compatibility)
+    DEFAULT_PLOT_VARIABLE: str = os.getenv("DEFAULT_PLOT_VARIABLE", "RAIN1")
+    
     # ==================== Validation Settings ====================
     # Valid latitude range
     LAT_BOUNDS: tuple = (-90.0, 90.0)
