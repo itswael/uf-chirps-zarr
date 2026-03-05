@@ -118,33 +118,65 @@ export default function Home() {
 
       setChartData(timeSeriesData);
       
-      // For statistics, still use RAIN1 (CHIRPS precipitation)
-      // as it's the most relevant for agricultural applications
-      if (selectedVariable === 'RAIN1') {
-        // Calculate spatial extent based on zoom level
-        const resolution = appConfig.map.zoomToResolution[location.zoom as keyof typeof appConfig.map.zoomToResolution] || 0.5;
-        const extent = resolution / 2;
-
-        const bounds = {
-          lon_min: location.lon - extent,
-          lon_max: location.lon + extent,
-          lat_min: location.lat - extent,
-          lat_max: location.lat + extent,
-        };
-
-        const dateRange = {
-          start_date: startDate,
-          end_date: endDate,
-        };
-
-        const statsData = await apiClient.getStatistics({
-          bounds,
-          date_range: dateRange,
+      // Calculate statistics from time series data
+      const values = timeSeriesData.values || timeSeriesData.precipitation || [];
+      const numericValues = values.filter((v: any) => v !== null && !isNaN(v));
+      
+      if (numericValues.length > 0) {
+        const sortedValues = [...numericValues].sort((a: number, b: number) => a - b);
+        const mean = numericValues.reduce((a: number, b: number) => a + b, 0) / numericValues.length;
+        const median = sortedValues.length % 2 === 0
+          ? (sortedValues[sortedValues.length / 2 - 1] + sortedValues[sortedValues.length / 2]) / 2
+          : sortedValues[Math.floor(sortedValues.length / 2)];
+        const max = Math.max(...numericValues);
+        const min = Math.min(...numericValues);
+        const variance = numericValues.reduce((acc: number, val: number) => acc + Math.pow(val - mean, 2), 0) / numericValues.length;
+        const std = Math.sqrt(variance);
+        
+        // For precipitation variables, calculate rain-specific stats
+        const isRainVariable = selectedVariable === 'RAIN1' || selectedVariable === 'RAIN2' || selectedVariable === 'RAIN';
+        const daysWithRain = isRainVariable ? numericValues.filter((v: number) => v >= 0.1).length : 0;
+        const dryDays = isRainVariable ? numericValues.filter((v: number) => v < 0.1).length : 0;
+        const total = isRainVariable ? numericValues.reduce((a: number, b: number) => a + b, 0) : 0;
+        
+        // Wet days stats (for precipitation variables only)
+        const wetDayValues = isRainVariable ? numericValues.filter((v: number) => v >= 0.1) : numericValues;
+        const wetDaysSorted = [...wetDayValues].sort((a: number, b: number) => a - b);
+        const wetDaysMean = wetDayValues.length > 0 ? wetDayValues.reduce((a: number, b: number) => a + b, 0) / wetDayValues.length : 0;
+        const wetDaysMedian = wetDaysSorted.length % 2 === 0 && wetDaysSorted.length > 0
+          ? (wetDaysSorted[wetDaysSorted.length / 2 - 1] + wetDaysSorted[wetDaysSorted.length / 2]) / 2
+          : wetDaysSorted[Math.floor(wetDaysSorted.length / 2)] || 0;
+        const wetDaysMax = wetDayValues.length > 0 ? Math.max(...wetDayValues) : 0;
+        const wetDaysMin = wetDayValues.length > 0 ? Math.min(...wetDayValues) : 0;
+        const wetDaysVariance = wetDayValues.length > 0 ? wetDayValues.reduce((acc: number, val: number) => acc + Math.pow(val - wetDaysMean, 2), 0) / wetDayValues.length : 0;
+        const wetDaysStd = Math.sqrt(wetDaysVariance);
+        
+        setStatistics({
+          all_days: {
+            total_precipitation: total,
+            mean_daily: mean,
+            median_daily: median,
+            max_daily: max,
+            min_daily: min,
+            std_daily: std,
+            days_with_rain: daysWithRain,
+            dry_days: dryDays,
+          },
+          wet_days: {
+            total_precipitation: isRainVariable ? wetDayValues.reduce((a: number, b: number) => a + b, 0) : 0,
+            mean_daily: wetDaysMean,
+            median_daily: wetDaysMedian,
+            max_daily: wetDaysMax,
+            min_daily: wetDaysMin,
+            std_daily: wetDaysStd,
+            days_with_rain: wetDayValues.length,
+            dry_days: 0,
+          },
+          is_rain_variable: isRainVariable,
+          variable_name: selectedVariable,
+          units: timeSeriesData.units || '',
         });
-
-        setStatistics(statsData);
       } else {
-        // For non-precipitation variables, clear statistics
         setStatistics(null);
       }
     } catch (err: any) {

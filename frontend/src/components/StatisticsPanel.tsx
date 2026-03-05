@@ -37,6 +37,9 @@ interface Statistics {
 interface StatisticsData {
   all_days: Statistics;
   wet_days: Statistics;
+  is_rain_variable?: boolean;
+  variable_name?: string;
+  units?: string;
 }
 
 interface StatisticsPanelProps {
@@ -73,45 +76,63 @@ export default function StatisticsPanel({ statistics, loading }: StatisticsPanel
 
   // Select the appropriate statistics based on the tab
   const currentStats = selectedTab === 0 ? statistics.all_days : statistics.wet_days;
-
-  const stats = [
-    {
+  const isRainVariable = statistics.is_rain_variable ?? true;
+  const units = statistics.units || 'mm';
+  
+  // Build stats array based on variable type
+  const statsArray = [];
+  
+  // Total (only for rain variables)
+  if (isRainVariable) {
+    statsArray.push({
       label: 'Total Precipitation',
-      value: `${currentStats.total_precipitation.toFixed(1)} mm`,
+      value: `${currentStats.total_precipitation.toFixed(1)} ${units}`,
       icon: <WaterDrop />,
       color: '#2196f3',
-    },
-    {
-      label: 'Mean Daily',
-      value: `${currentStats.mean_daily.toFixed(2)} mm/day`,
-      icon: <ShowChart />,
-      color: '#4caf50',
-    },
-    {
-      label: 'Median Daily',
-      value: `${currentStats.median_daily.toFixed(2)} mm/day`,
-      icon: <BarChartIcon />,
-      color: '#ff9800',
-    },
-    {
-      label: 'Max Daily',
-      value: `${currentStats.max_daily.toFixed(1)} mm/day`,
-      icon: <TrendingUp />,
-      color: '#f44336',
-    },
-    {
-      label: 'Min Daily',
-      value: `${currentStats.min_daily.toFixed(1)} mm/day`,
-      icon: <TrendingDown />,
-      color: '#9c27b0',
-    },
-    {
-      label: 'Std. Deviation',
-      value: `${currentStats.std_daily.toFixed(2)} mm/day`,
-      icon: <Opacity />,
-      color: '#00bcd4',
-    },
-  ];
+    });
+  }
+  
+  // Mean
+  statsArray.push({
+    label: 'Mean Daily',
+    value: `${currentStats.mean_daily.toFixed(2)} ${units}`,
+    icon: <ShowChart />,
+    color: '#4caf50',
+  });
+  
+  // Median
+  statsArray.push({
+    label: 'Median Daily',
+    value: `${currentStats.median_daily.toFixed(2)} ${units}`,
+    icon: <BarChartIcon />,
+    color: '#ff9800',
+  });
+  
+  // Max
+  statsArray.push({
+    label: 'Max Daily',
+    value: `${currentStats.max_daily.toFixed(1)} ${units}`,
+    icon: <TrendingUp />,
+    color: '#f44336',
+  });
+  
+  // Min
+  statsArray.push({
+    label: 'Min Daily',
+    value: `${currentStats.min_daily.toFixed(1)} ${units}`,
+    icon: <TrendingDown />,
+    color: '#9c27b0',
+  });
+  
+  // Std Dev
+  statsArray.push({
+    label: 'Std. Deviation',
+    value: `${currentStats.std_daily.toFixed(2)} ${units}`,
+    icon: <Opacity />,
+    color: '#00bcd4',
+  });
+  
+  const stats = statsArray;
 
   const totalDays = currentStats.days_with_rain + currentStats.dry_days;
   const rainPercentage = totalDays > 0 ? (currentStats.days_with_rain / totalDays) * 100 : 0;
@@ -121,14 +142,16 @@ export default function StatisticsPanel({ statistics, loading }: StatisticsPanel
       <Typography variant="h6" gutterBottom>
         Statistical Summary
       </Typography>
-      <Tabs 
-        value={selectedTab} 
-        onChange={handleTabChange} 
-        sx={{ mb: 2, borderBottom: 1, borderColor: 'divider' }}
-      >
-        <Tab label="All Days" />
-        <Tab label="Wet Days Only" />
-      </Tabs>
+      {isRainVariable && (
+        <Tabs 
+          value={selectedTab} 
+          onChange={handleTabChange} 
+          sx={{ mb: 2, borderBottom: 1, borderColor: 'divider' }}
+        >
+          <Tab label="All Days" />
+          <Tab label="Wet Days Only" />
+        </Tabs>
+      )}
       <Grid container spacing={2}>
         {stats.map((stat, index) => (
           <Grid item xs={12} sm={6} key={index}>
@@ -155,52 +178,56 @@ export default function StatisticsPanel({ statistics, loading }: StatisticsPanel
             </Card>
           </Grid>
         ))}
-        <Grid item xs={12} sm={6}>
-          <Card
-            elevation={1}
-            sx={{
-              bgcolor: '#2196f310',
-              borderLeft: `4px solid #2196f3`,
-            }}
-          >
-            <CardContent sx={{ py: 1.5, px: 2 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Box sx={{ color: '#2196f3' }}><Umbrella /></Box>
-                <Box sx={{ flex: 1 }}>
-                  <Typography variant="caption" color="text.secondary">
-                    Days with Rain
-                  </Typography>
-                  <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                    {currentStats.days_with_rain} ({rainPercentage.toFixed(1)}%)
-                  </Typography>
-                </Box>
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid item xs={12} sm={6}>
-          <Card
-            elevation={1}
-            sx={{
-              bgcolor: '#ff980810',
-              borderLeft: `4px solid #ff9800`,
-            }}
-          >
-            <CardContent sx={{ py: 1.5, px: 2 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Box sx={{ color: '#ff9800' }}><WbSunny /></Box>
-                <Box sx={{ flex: 1 }}>
-                  <Typography variant="caption" color="text.secondary">
-                    Dry Days
-                  </Typography>
-                  <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                    {currentStats.dry_days} ({(100 - rainPercentage).toFixed(1)}%)
-                  </Typography>
-                </Box>
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
+        {isRainVariable && (
+          <>
+            <Grid item xs={12} sm={6}>
+              <Card
+                elevation={1}
+                sx={{
+                  bgcolor: '#2196f310',
+                  borderLeft: `4px solid #2196f3`,
+                }}
+              >
+                <CardContent sx={{ py: 1.5, px: 2 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Box sx={{ color: '#2196f3' }}><Umbrella /></Box>
+                    <Box sx={{ flex: 1 }}>
+                      <Typography variant="caption" color="text.secondary">
+                        Days with Rain
+                      </Typography>
+                      <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                        {currentStats.days_with_rain} ({rainPercentage.toFixed(1)}%)
+                      </Typography>
+                    </Box>
+                  </Box>
+                </CardContent>
+              </Card>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <Card
+                elevation={1}
+                sx={{
+                  bgcolor: '#ff980810',
+                  borderLeft: `4px solid #ff9800`,
+                }}
+              >
+                <CardContent sx={{ py: 1.5, px: 2 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Box sx={{ color: '#ff9800' }}><WbSunny /></Box>
+                    <Box sx={{ flex: 1 }}>
+                      <Typography variant="caption" color="text.secondary">
+                        Dry Days
+                      </Typography>
+                      <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                        {currentStats.dry_days} ({(100 - rainPercentage).toFixed(1)}%)
+                      </Typography>
+                    </Box>
+                  </Box>
+                </CardContent>
+              </Card>
+            </Grid>
+          </>
+        )}
       </Grid>
     </Paper>
   );

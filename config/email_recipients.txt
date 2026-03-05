@@ -12,4 +12,5 @@
 # monitoring@example.com
 
 # Add your email recipients below:
-
+m.mohammadwael@ufl.edu
+mohammadwael8@gmail.com
