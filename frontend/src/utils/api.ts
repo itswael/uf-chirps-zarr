@@ -34,6 +34,19 @@ class ApiClient {
   }
 
   /**
+   * Warm backend NASA POWER cache for a date range
+   */
+  async preloadWeatherCache(params: {
+    start_date: string;
+    end_date: string;
+  }) {
+    const response = await this.client.post('/api/data/preload-weather-cache', null, {
+      params,
+    });
+    return response.data;
+  }
+
+  /**
    * Get time series data for a location
    */
   async getTimeSeries(params: {

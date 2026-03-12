@@ -3,8 +3,13 @@ NASA POWER S3 Data Fetcher
 Fetches daily meteorological and solar data from NASA POWER S3 Zarr stores
 """
 import asyncio
+from collections import OrderedDict
+from pathlib import Path
 import logging
 import os
+import hashlib
+import shutil
+import tempfile
 from datetime import datetime, date
 from typing import Optional, Dict, Any, List
 import pandas as pd
@@ -29,6 +34,16 @@ class NasaPowerS3Fetcher:
         self._syn1_ds: Optional[xr.Dataset] = None
         self._merra2_ds: Optional[xr.Dataset] = None
         self._datasets_loaded = False
+        self._cache_lock = asyncio.Lock()
+        self._date_slice_cache: Dict[str, OrderedDict[str, xr.Dataset]] = {
+            "syn1": OrderedDict(),
+            "merra2": OrderedDict(),
+        }
+        self._local_subset_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
+        self._date_slice_cache_limit = 8
+        self._local_subset_cache_limit = 4
+        self._local_cache_root = Path(tempfile.gettempdir()) / "uf-chirps-zarr" / "nasa-power-subsets"
+        self._local_cache_root.mkdir(parents=True, exist_ok=True)
     
     def _open_power_zarr(self, zarr_url: str) -> xr.Dataset:
         """
@@ -103,6 +118,182 @@ class NasaPowerS3Fetcher:
         except Exception as e:
             logger.error(f"Error loading NASA POWER datasets: {e}")
             raise
+
+    @staticmethod
+    def _format_date_cache_key(start_date: date, end_date: date) -> str:
+        """Create a stable cache key for a date range."""
+        return f"{start_date.isoformat()}_{end_date.isoformat()}"
+
+    @staticmethod
+    def _coordinate_slice(values, min_value: float, max_value: float) -> slice:
+        """Build an inclusive slice that respects coordinate ordering."""
+        lower = min(min_value, max_value)
+        upper = max(min_value, max_value)
+
+        if len(values) < 2:
+            return slice(lower, upper)
+
+        first = float(values[0])
+        last = float(values[-1])
+        if first <= last:
+            return slice(lower, upper)
+        return slice(upper, lower)
+
+    def _slice_date_range(
+        self,
+        ds: xr.Dataset,
+        start_date: date,
+        end_date: date,
+        variables: List[str]
+    ) -> xr.Dataset:
+        """Create a lazily sliced dataset for the requested date range."""
+        return ds[variables].sel(
+            time=slice(
+                datetime.combine(start_date, datetime.min.time()),
+                datetime.combine(end_date, datetime.min.time())
+            )
+        )
+
+    def _materialize_local_subset(
+        self,
+        ds: xr.Dataset,
+        local_path: Path,
+        min_lat: float,
+        max_lat: float,
+        min_lon: float,
+        max_lon: float
+    ) -> xr.Dataset:
+        """Write a bounded local Zarr subset and reopen it for repeated point access."""
+        if local_path.exists():
+            return xr.open_zarr(local_path, consolidated=True)
+
+        lat_slice = self._coordinate_slice(ds.lat.values, min_lat, max_lat)
+        lon_slice = self._coordinate_slice(ds.lon.values, min_lon, max_lon)
+        subset = ds.sel(lat=lat_slice, lon=lon_slice)
+
+        if subset.sizes.get("lat", 0) == 0 or subset.sizes.get("lon", 0) == 0:
+            raise ValueError(
+                "No NASA POWER grid cells found for the requested bounds"
+            )
+
+        for var_name in subset.variables:
+            subset[var_name].encoding = {}
+
+        subset = subset.chunk({"time": -1, "lat": 10, "lon": 10})
+
+        try:
+            subset.to_zarr(local_path, mode="w", consolidated=True)
+            return xr.open_zarr(local_path, consolidated=True)
+        except Exception:
+            shutil.rmtree(local_path, ignore_errors=True)
+            raise
+
+    def _trim_date_slice_cache(self, dataset_name: str) -> None:
+        """Keep the in-memory date-slice cache bounded."""
+        cache = self._date_slice_cache[dataset_name]
+        while len(cache) > self._date_slice_cache_limit:
+            cache.popitem(last=False)
+
+    def _trim_local_subset_cache(self) -> None:
+        """Keep the in-memory local subset cache bounded."""
+        while len(self._local_subset_cache) > self._local_subset_cache_limit:
+            self._local_subset_cache.popitem(last=False)
+
+    async def prepare_date_range_cache(
+        self,
+        start_date: date,
+        end_date: date
+    ) -> Dict[str, xr.Dataset]:
+        """Warm and return date-scoped NASA POWER datasets."""
+        if not self._datasets_loaded:
+            await self.load_datasets()
+
+        cache_key = self._format_date_cache_key(start_date, end_date)
+
+        async with self._cache_lock:
+            dataset_configs = (
+                ("merra2", self._merra2_ds, nasa_power_config.MET_VARS),
+                ("syn1", self._syn1_ds, nasa_power_config.SOLAR_VARS),
+            )
+
+            for dataset_name, ds, variables in dataset_configs:
+                if ds is None:
+                    continue
+
+                cache = self._date_slice_cache[dataset_name]
+                if cache_key not in cache:
+                    cache[cache_key] = self._slice_date_range(ds, start_date, end_date, variables)
+                    self._trim_date_slice_cache(dataset_name)
+                cache.move_to_end(cache_key)
+
+            return {
+                dataset_name: cache[cache_key]
+                for dataset_name, cache in self._date_slice_cache.items()
+                if cache_key in cache
+            }
+
+    async def prepare_local_subsets(
+        self,
+        start_date: date,
+        end_date: date,
+        min_lat: float,
+        max_lat: float,
+        min_lon: float,
+        max_lon: float
+    ) -> Dict[str, xr.Dataset]:
+        """Create or reuse local Zarr subsets for a bounded multi-point request."""
+        date_datasets = await self.prepare_date_range_cache(start_date, end_date)
+
+        bounds_key = (
+            f"{start_date.isoformat()}_{end_date.isoformat()}_"
+            f"{min_lat:.4f}_{max_lat:.4f}_{min_lon:.4f}_{max_lon:.4f}"
+        )
+        cache_key = hashlib.sha256(bounds_key.encode("utf-8")).hexdigest()[:16]
+
+        async with self._cache_lock:
+            if cache_key in self._local_subset_cache:
+                self._local_subset_cache.move_to_end(cache_key)
+                return self._local_subset_cache[cache_key]["datasets"]
+
+            subset_dir = self._local_cache_root / cache_key
+            subset_dir.mkdir(parents=True, exist_ok=True)
+
+            datasets = {
+                "merra2": self._materialize_local_subset(
+                    ds=date_datasets["merra2"],
+                    local_path=subset_dir / "merra2.zarr",
+                    min_lat=min_lat,
+                    max_lat=max_lat,
+                    min_lon=min_lon,
+                    max_lon=max_lon,
+                ),
+                "syn1": self._materialize_local_subset(
+                    ds=date_datasets["syn1"],
+                    local_path=subset_dir / "syn1.zarr",
+                    min_lat=min_lat,
+                    max_lat=max_lat,
+                    min_lon=min_lon,
+                    max_lon=max_lon,
+                ),
+            }
+
+            self._local_subset_cache[cache_key] = {
+                "path": subset_dir,
+                "datasets": datasets,
+            }
+            self._trim_local_subset_cache()
+
+            logger.info(
+                "Prepared local NASA POWER subset cache for %s to %s within lat %.4f..%.4f, lon %.4f..%.4f",
+                start_date,
+                end_date,
+                min_lat,
+                max_lat,
+                min_lon,
+                max_lon,
+            )
+
+            return datasets
     
     def _slice_point(
         self,
@@ -160,7 +351,8 @@ class NasaPowerS3Fetcher:
         start_date: date,
         end_date: date,
         include_solar: bool = True,
-        include_met: bool = True
+        include_met: bool = True,
+        dataset_overrides: Optional[Dict[str, xr.Dataset]] = None
     ) -> pd.DataFrame:
         """
         Fetch NASA POWER data for a specific location and date range.
@@ -182,14 +374,15 @@ class NasaPowerS3Fetcher:
         
         try:
             df = None
+            source_datasets = dataset_overrides or await self.prepare_date_range_cache(start_date, end_date)
             
             # Fetch meteorological data from MERRA-2
-            if include_met and self._merra2_ds is not None:
+            if include_met and source_datasets.get("merra2") is not None:
                 loop = asyncio.get_event_loop()
                 sub_met = await loop.run_in_executor(
                     None,
                     self._slice_point,
-                    self._merra2_ds,
+                    source_datasets["merra2"],
                     latitude,
                     longitude,
                     start_date,
@@ -203,12 +396,12 @@ class NasaPowerS3Fetcher:
                 df = df_met
             
             # Fetch solar data from SYN1deg
-            if include_solar and self._syn1_ds is not None:
+            if include_solar and source_datasets.get("syn1") is not None:
                 loop = asyncio.get_event_loop()
                 sub_sol = await loop.run_in_executor(
                     None,
                     self._slice_point,
-                    self._syn1_ds,
+                    source_datasets["syn1"],
                     latitude,
                     longitude,
                     start_date,

@@ -124,6 +124,35 @@ class DataRequest(BaseModel):
     aggregation: Optional[str] = None  # 'daily', 'weekly', 'monthly', 'yearly'
 
 
+@app.post("/api/data/preload-weather-cache")
+async def preload_weather_cache(
+    start_date: str = Query(...),
+    end_date: str = Query(...)
+):
+    """Warm the NASA POWER date-range cache for upcoming requests."""
+    try:
+        if not config.ENABLE_NASA_POWER:
+            return {
+                "status": "disabled",
+                "message": "NASA POWER is disabled"
+            }
+
+        fetcher = get_fetcher()
+        await fetcher.prepare_date_range_cache(
+            start_date=pd.to_datetime(start_date).date(),
+            end_date=pd.to_datetime(end_date).date(),
+        )
+
+        return {
+            "status": "ready",
+            "start_date": start_date,
+            "end_date": end_date,
+        }
+    except Exception as e:
+        logger.error(f"Error preloading NASA POWER cache: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/")
 async def root():
     """Health check endpoint"""
@@ -628,14 +657,28 @@ async def download_icasa_multi(
                 status_code=400,
                 detail="No valid coordinates found in shapefile"
             )
+
+        power_dataset_overrides = None
+        if config.ENABLE_NASA_POWER:
+            bounds = ShapefileProcessor.calculate_bounds(valid_coords)
+            fetcher = get_fetcher()
+            power_dataset_overrides = await fetcher.prepare_local_subsets(
+                start_date=pd.to_datetime(start_date).date(),
+                end_date=pd.to_datetime(end_date).date(),
+                min_lat=bounds["lat_min"],
+                max_lat=bounds["lat_max"],
+                min_lon=bounds["lon_min"],
+                max_lon=bounds["lon_max"],
+            )
+            logger.info("Using bounded local NASA POWER Zarr subsets for multi-point ICASA generation")
         
         # Open CHIRPS dataset
         ds = open_zarr()
-        merger = WeatherDataMerger(ds)
+        merger = WeatherDataMerger(ds, power_dataset_overrides=power_dataset_overrides)
         
-        # Generate weather package with enhanced generator (parallel processing)
-        logger.info("Generating weather data package with parallel processing...")
-        batch_generator = EnhancedIcasaBatchGenerator(max_workers=config.MAX_WORKERS)
+        # After pre-filtering into local subsets, generation is CPU-bound; keep this path sequential.
+        logger.info("Generating weather data package from local dataset subsets...")
+        batch_generator = EnhancedIcasaBatchGenerator(max_workers=1)
         
         files = await batch_generator.generate_batch_from_merger(
             coordinates=valid_coords,
