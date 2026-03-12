@@ -91,6 +91,33 @@ export default function Home() {
     fetchMetadata();
   }, []);
 
+  useEffect(() => {
+    if (!metadata?.nasa_power_enabled || !startDate || !endDate) {
+      return;
+    }
+
+    let active = true;
+
+    const preloadWeatherCache = async () => {
+      try {
+        await apiClient.preloadWeatherCache({
+          start_date: startDate,
+          end_date: endDate,
+        });
+      } catch (err) {
+        if (active) {
+          console.error('Error preloading NASA POWER cache:', err);
+        }
+      }
+    };
+
+    preloadWeatherCache();
+
+    return () => {
+      active = false;
+    };
+  }, [metadata?.nasa_power_enabled, startDate, endDate]);
+
   // Fetch data when location, dates, aggregation, or variable changes
   useEffect(() => {
     if (location) {

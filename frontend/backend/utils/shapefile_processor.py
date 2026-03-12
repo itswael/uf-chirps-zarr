@@ -23,6 +23,22 @@ logger = logging.getLogger(__name__)
 
 class ShapefileProcessor:
     """Process shapefiles and extract coordinates"""
+
+    @staticmethod
+    def calculate_bounds(coordinates: List[Tuple[float, float]]) -> Dict[str, float]:
+        """Calculate bounding coordinates for a collection of lon/lat points."""
+        if not coordinates:
+            raise ValueError("Cannot calculate bounds for an empty coordinate list")
+
+        longitudes = [lon for lon, _ in coordinates]
+        latitudes = [lat for _, lat in coordinates]
+
+        return {
+            "lon_min": min(longitudes),
+            "lon_max": max(longitudes),
+            "lat_min": min(latitudes),
+            "lat_max": max(latitudes),
+        }
     
     @staticmethod
     def extract_coordinates_from_shapefile(

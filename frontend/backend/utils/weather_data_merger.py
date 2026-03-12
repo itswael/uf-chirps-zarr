@@ -4,7 +4,7 @@ Combines CHIRPS and NASA POWER data with resolution handling
 """
 import logging
 from datetime import date
-from typing import Optional
+from typing import Optional, Dict
 import pandas as pd
 import numpy as np
 import xarray as xr
@@ -18,7 +18,11 @@ logger = logging.getLogger(__name__)
 class WeatherDataMerger:
     """Merge CHIRPS precipitation and NASA POWER meteorological data"""
     
-    def __init__(self, chirps_dataset: xr.Dataset):
+    def __init__(
+        self,
+        chirps_dataset: xr.Dataset,
+        power_dataset_overrides: Optional[Dict[str, xr.Dataset]] = None
+    ):
         """
         Initialize merger with CHIRPS dataset.
         
@@ -27,6 +31,7 @@ class WeatherDataMerger:
         """
         self.chirps_dataset = chirps_dataset
         self.nasa_fetcher = get_fetcher()
+        self.power_dataset_overrides = power_dataset_overrides
     
     async def get_chirps_data(
         self,
@@ -124,7 +129,8 @@ class WeatherDataMerger:
                 start_date=start,
                 end_date=end,
                 include_solar=include_solar,
-                include_met=include_met
+                include_met=include_met,
+                dataset_overrides=self.power_dataset_overrides
             )
             
             # Handle rain data based on source selection
