@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useMemo } from 'react';
 import {
   Paper,
   Box,
@@ -27,6 +27,7 @@ import {
   Line,
 } from 'recharts';
 import appConfig from '@/config/app.config';
+import { generateWeatherSummary } from '@/utils/weatherSummary';
 
 interface ChartData {
   time: string[];
@@ -114,6 +115,19 @@ export default function PrecipitationChart({
   };
 
   const { name: variableName, color: variableColor } = getVariableDisplay();
+  const rawValues = data ? (data.values || data.precipitation || []) : [];
+
+  const summaryText = useMemo(
+    () =>
+      generateWeatherSummary({
+        selectedVariable,
+        variableName,
+        units: data?.units || '',
+        aggregation,
+        values: rawValues,
+      }),
+    [selectedVariable, variableName, data?.units, aggregation, rawValues]
+  );
 
   return (
     <Paper elevation={3} sx={{ p: 2, height: '100%' }}>
@@ -146,6 +160,7 @@ export default function PrecipitationChart({
             onChange={handleAggregationChange}
             size="small"
             aria-label="aggregation level"
+            sx={{ flexShrink: 0 }}
           >
             {appConfig.visualization.aggregationLevels.map((level) => (
               <ToggleButton key={level.value} value={level.value} aria-label={level.label}>
@@ -171,72 +186,90 @@ export default function PrecipitationChart({
           <CircularProgress size={appConfig.ui.loading.spinnerSize} />
         </Box>
       ) : data && chartData.length > 0 ? (
-        <ResponsiveContainer width="100%" height={appConfig.visualization.chart.height}>
-          {useLineChart ? (
-            <LineChart
-              data={chartData}
-              margin={appConfig.visualization.chart.margin}
-            >
-              <CartesianGrid strokeDasharray="3 3" stroke={appConfig.visualization.colors.gridLines} />
-              <XAxis
-                dataKey="date"
-                tick={{ fontSize: 12 }}
-                angle={-45}
-                textAnchor="end"
-                height={80}
-              />
-              <YAxis
-                label={{ value: data.units, angle: -90, position: 'insideLeft' }}
-                tick={{ fontSize: 12 }}
-              />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: 'rgba(255, 255, 255, 0.95)',
-                  border: '1px solid #ccc',
-                }}
-              />
-              <Legend />
-              <Line
-                type="monotone"
-                dataKey="value"
-                stroke={variableColor}
-                strokeWidth={2}
-                dot={{ r: 3 }}
-                name={variableName}
-              />
-            </LineChart>
-          ) : (
-            <BarChart
-              data={chartData}
-              margin={appConfig.visualization.chart.margin}
-            >
-              <CartesianGrid strokeDasharray="3 3" stroke={appConfig.visualization.colors.gridLines} />
-              <XAxis
-                dataKey="date"
-                tick={{ fontSize: 12 }}
-                angle={-45}
-                textAnchor="end"
-                height={80}
-              />
-              <YAxis
-                label={{ value: data.units, angle: -90, position: 'insideLeft' }}
-                tick={{ fontSize: 12 }}
-              />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: 'rgba(255, 255, 255, 0.95)',
-                  border: '1px solid #ccc',
-                }}
-              />
-              <Legend />
-              <Bar
-                dataKey="value"
-                fill={variableColor}
-                name={variableName}
-              />
-            </BarChart>
-          )}
-        </ResponsiveContainer>
+        <>
+          <ResponsiveContainer width="100%" height={appConfig.visualization.chart.height}>
+            {useLineChart ? (
+              <LineChart
+                data={chartData}
+                margin={appConfig.visualization.chart.margin}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke={appConfig.visualization.colors.gridLines} />
+                <XAxis
+                  dataKey="date"
+                  tick={{ fontSize: 12 }}
+                  angle={-45}
+                  textAnchor="end"
+                  height={80}
+                />
+                <YAxis
+                  label={{ value: data.units, angle: -90, position: 'insideLeft' }}
+                  tick={{ fontSize: 12 }}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                    border: '1px solid #ccc',
+                  }}
+                />
+                <Legend />
+                <Line
+                  type="monotone"
+                  dataKey="value"
+                  stroke={variableColor}
+                  strokeWidth={2}
+                  dot={{ r: 3 }}
+                  name={variableName}
+                />
+              </LineChart>
+            ) : (
+              <BarChart
+                data={chartData}
+                margin={appConfig.visualization.chart.margin}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke={appConfig.visualization.colors.gridLines} />
+                <XAxis
+                  dataKey="date"
+                  tick={{ fontSize: 12 }}
+                  angle={-45}
+                  textAnchor="end"
+                  height={80}
+                />
+                <YAxis
+                  label={{ value: data.units, angle: -90, position: 'insideLeft' }}
+                  tick={{ fontSize: 12 }}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                    border: '1px solid #ccc',
+                  }}
+                />
+                <Legend />
+                <Bar
+                  dataKey="value"
+                  fill={variableColor}
+                  name={variableName}
+                />
+              </BarChart>
+            )}
+          </ResponsiveContainer>
+
+          <Box
+            sx={{
+              mt: 2,
+              px: 1.5,
+              py: 1.25,
+              borderRadius: 1,
+              bgcolor: 'grey.50',
+              border: '1px solid',
+              borderColor: 'divider',
+            }}
+          >
+            <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.65 }}>
+              {summaryText}
+            </Typography>
+          </Box>
+        </>
       ) : (
         <Box
           sx={{
