@@ -106,6 +106,31 @@ def open_zarr():
         raise HTTPException(status_code=500, detail=f"Error opening Zarr store: {str(e)}")
 
 
+def parse_selected_parameters(selected_parameters: Optional[str]) -> Optional[List[str]]:
+    """Parse and validate comma-separated selected ICASA parameter list."""
+    if not selected_parameters:
+        return None
+
+    parsed = [p.strip().upper() for p in selected_parameters.split(',') if p.strip()]
+    if not parsed:
+        return None
+
+    available = set(nasa_power_config.get_available_variables())
+    invalid = [p for p in parsed if p not in available]
+    if invalid:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Invalid selected_parameters: {', '.join(invalid)}. "
+                f"Available: {', '.join(sorted(available))}"
+            )
+        )
+
+    # De-duplicate while preserving order.
+    ordered_unique = list(dict.fromkeys(parsed))
+    return ordered_unique
+
+
 class SpatialBounds(BaseModel):
     lon_min: float
     lon_max: float
@@ -526,7 +551,11 @@ async def download_icasa(
     lon: float = Query(...),
     start_date: str = Query(...),
     end_date: str = Query(...),
-    rain_source: str = Query("both", description="Rain data source: chirps, nasa_power, or both")
+    rain_source: str = Query("both", description="Rain data source: chirps, nasa_power, or both"),
+    selected_parameters: Optional[str] = Query(
+        None,
+        description="Comma-separated ICASA parameters to include (e.g., RAIN,TMAX,TMIN)"
+    )
 ):
     """
     Download weather data in ICASA format for a single location.
@@ -542,6 +571,7 @@ async def download_icasa(
         
         ds = open_zarr()
         merger = WeatherDataMerger(ds)
+        selected_vars = parse_selected_parameters(selected_parameters)
         
         # Get merged data
         df = await merger.merge_weather_data(
@@ -568,7 +598,8 @@ async def download_icasa(
             lat=lat,
             lon=lon,
             site_code=config.DEFAULT_SITE_CODE,
-            source_description=source_desc
+            source_description=source_desc,
+            selected_variables=selected_vars,
         )
         
         # Create filename
@@ -597,7 +628,11 @@ async def download_icasa_multi(
     shapefile: UploadFile = File(..., description="Shapefile (.shp)"),
     start_date: str = Form(...),
     end_date: str = Form(...),
-    rain_source: str = Form("both", description="Rain data source: chirps, nasa_power, or both")
+    rain_source: str = Form("both", description="Rain data source: chirps, nasa_power, or both"),
+    selected_parameters: Optional[str] = Form(
+        None,
+        description="Comma-separated ICASA parameters to include (e.g., RAIN,TMAX,TMIN)"
+    )
 ):
     """
     Download ICASA weather data for multiple points from a shapefile.
@@ -615,6 +650,8 @@ async def download_icasa_multi(
                 status_code=400,
                 detail="rain_source must be one of: chirps, nasa_power, both"
             )
+
+        selected_vars = parse_selected_parameters(selected_parameters)
         
         # Read uploaded file
         shp_content = await shapefile.read()
@@ -686,7 +723,8 @@ async def download_icasa_multi(
             end_date=end_date,
             merger=merger,
             rain_source=rain_source,
-            site_code=config.DEFAULT_SITE_CODE
+            site_code=config.DEFAULT_SITE_CODE,
+            selected_variables=selected_vars,
         )
         
         # Create zip file
