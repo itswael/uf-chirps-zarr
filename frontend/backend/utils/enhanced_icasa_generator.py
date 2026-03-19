@@ -33,7 +33,8 @@ class EnhancedIcasaGenerator:
         lat: float,
         lon: float,
         site_code: str = "UFLC",
-        source_description: str = "CHIRPS + NASA POWER"
+        source_description: str = "CHIRPS + NASA POWER",
+        selected_variables: Optional[List[str]] = None,
     ) -> str:
         """
         Generate ICASA format weather file content from a DataFrame.
@@ -65,6 +66,13 @@ class EnhancedIcasaGenerator:
         
         # Write variable descriptions for available variables
         available_vars = [col for col in df.columns if col != 'time']
+        if selected_variables:
+            selected_set = set(selected_variables)
+            available_vars = [var for var in available_vars if var in selected_set]
+
+        if not available_vars:
+            raise ValueError("No matching weather variables available for ICASA output")
+
         for var_code in available_vars:
             config = nasa_power_config.get_variable_config(var_code)
             if config:
@@ -190,7 +198,8 @@ class EnhancedIcasaBatchGenerator:
         end_date: str,
         merger,  # WeatherDataMerger instance
         rain_source: str = "both",
-        site_code: str = "UFLC"
+        site_code: str = "UFLC",
+        selected_variables: Optional[List[str]] = None,
     ) -> Dict[str, str]:
         """
         Generate ICASA files for multiple coordinates using merged data in parallel.
@@ -225,6 +234,7 @@ class EnhancedIcasaBatchGenerator:
                 merger=merger,
                 rain_source=rain_source,
                 site_code=site_code,
+                selected_variables=selected_variables,
                 total_points=total_points
             )
             tasks.append(task)
@@ -266,6 +276,7 @@ class EnhancedIcasaBatchGenerator:
         merger,
         rain_source: str,
         site_code: str,
+        selected_variables: Optional[List[str]],
         total_points: int
     ) -> Optional[tuple]:
         """
@@ -303,7 +314,8 @@ class EnhancedIcasaBatchGenerator:
                     lat=lat,
                     lon=lon,
                     site_code=site_code,
-                    source_description=source_desc
+                    source_description=source_desc,
+                    selected_variables=selected_variables,
                 )
                 
                 # Log progress periodically (every 10 points or on key milestones)
