@@ -191,7 +191,8 @@ class ZipFileBuilder:
         files: Dict[str, str],
         archive_name: str = "weather_data.zip",
         include_readme: bool = True,
-        metadata: Optional[Dict] = None
+        metadata: Optional[Dict] = None,
+        shapefile_path: Optional[str] = None
     ) -> bytes:
         """
         Create a zip archive from ICASA files.
@@ -201,10 +202,13 @@ class ZipFileBuilder:
             archive_name: Name for the zip archive
             include_readme: Include a README file with metadata
             metadata: Optional metadata to include in README
+            shapefile_path: Optional path to shapefile to include in archive
             
         Returns:
             Zip file content as bytes
         """
+        from pathlib import Path
+        
         zip_buffer = io.BytesIO()
         
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
@@ -212,11 +216,34 @@ class ZipFileBuilder:
             for filename, content in files.items():
                 zip_file.writestr(filename, content)
             
+            # Add shapefile if provided
+            if shapefile_path:
+                shapefile_path = Path(shapefile_path)
+                if shapefile_path.exists():
+                    # Add the main .shp file
+                    zip_file.write(
+                        shapefile_path,
+                        arcname=f"shapefile/{shapefile_path.name}"
+                    )
+                    
+                    # Add companion files (.shx, .dbf, .prj, etc.)
+                    base_path = shapefile_path.with_suffix('')
+                    companion_extensions = ['.shx', '.dbf', '.prj', '.cpg', '.qpj']
+                    
+                    for ext in companion_extensions:
+                        companion_file = base_path.with_suffix(ext)
+                        if companion_file.exists():
+                            zip_file.write(
+                                companion_file,
+                                arcname=f"shapefile/{companion_file.name}"
+                            )
+            
             # Add README if requested
             if include_readme:
                 readme_content = ZipFileBuilder._generate_readme(
                     file_count=len(files),
-                    metadata=metadata
+                    metadata=metadata,
+                    has_shapefile=shapefile_path is not None
                 )
                 zip_file.writestr('README.txt', readme_content)
         
@@ -224,7 +251,7 @@ class ZipFileBuilder:
         return zip_buffer.getvalue()
     
     @staticmethod
-    def _generate_readme(file_count: int, metadata: Optional[Dict] = None) -> str:
+    def _generate_readme(file_count: int, metadata: Optional[Dict] = None, has_shapefile: bool = False) -> str:
         """Generate README content for zip archive."""
         readme = io.StringIO()
         
@@ -232,7 +259,10 @@ class ZipFileBuilder:
         readme.write("ICASA Weather Data Package\n")
         readme.write("=" * 70 + "\n\n")
         
-        readme.write(f"Total Files: {file_count}\n\n")
+        readme.write(f"Total ICASA Files: {file_count}\n")
+        if has_shapefile:
+            readme.write("Shapefile: Included in 'shapefile/' directory\n")
+        readme.write("\n")
         
         if metadata:
             readme.write("Package Information:\n")
@@ -250,7 +280,8 @@ class ZipFileBuilder:
         readme.write("File Format: ICASA Weather Format\n")
         readme.write("-" * 70 + "\n")
         readme.write("Each file contains daily weather data for a specific coordinate.\n")
-        readme.write("Filename format: weather_pointXXXX_LAT_LON_STARTDATE_ENDDATE.txt\n\n")
+        readme.write("Filename format: weather_pointXXXX_LAT_LON_STARTDATE_ENDDATE.txt\n")
+        readme.write("(or point_id.txt if point IDs were available in the shapefile)\n\n")
         
         readme.write("File Structure:\n")
         readme.write("  - Header with site information\n")
@@ -260,6 +291,13 @@ class ZipFileBuilder:
         readme.write("Variables:\n")
         readme.write("  - RAIN: Precipitation (mm/day)\n")
         readme.write("  (Additional variables may be added in future versions)\n\n")
+        
+        if has_shapefile:
+            readme.write("Shapefile Information:\n")
+            readme.write("-" * 70 + "\n")
+            readme.write("The original shapefile with point definitions is included in the\n")
+            readme.write("'shapefile/' subdirectory. This includes all companion files (.shx,\n")
+            readme.write(".dbf, etc.) needed to open the shapefile in GIS software.\n\n")
         
         readme.write("Usage:\n")
         readme.write("  These files are compatible with DSSAT and other crop models\n")
