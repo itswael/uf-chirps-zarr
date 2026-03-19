@@ -664,13 +664,14 @@ async def download_icasa_multi(
         )
         temp_dir = shp_path.parent
         
-        # Extract coordinates
-        logger.info(f"Extracting coordinates from shapefile: {filename}")
-        coordinates = ShapefileProcessor.extract_coordinates_from_shapefile(shp_path)
+        # Extract coordinates and point IDs from shapefile
+        logger.info(f"Extracting coordinates and point IDs from: {filename}")
+        coordinates, point_ids_mapping = ShapefileProcessor.extract_coordinates_and_ids_from_file(shp_path)
         
-        # Validate coordinates
-        validation = ShapefileProcessor.validate_coordinates(
+        # Validate coordinates with IDs
+        validation = ShapefileProcessor.validate_coordinates_with_ids(
             coordinates,
+            point_ids_mapping,
             max_points=config.MAX_SHAPEFILE_POINTS,
             lat_bounds=config.LAT_BOUNDS,
             lon_bounds=config.LON_BOUNDS
@@ -681,19 +682,24 @@ async def download_icasa_multi(
                 detail=validation['message']
             )
         
-        logger.info(f"Processing {len(coordinates)} coordinates")
+        logger.info(f"Processing {len(coordinates)} coordinates with {len(set(point_ids_mapping.values()))} unique point IDs")
         
-        # Filter to valid coordinates only
-        valid_coords = [
-            (lon, lat) for lon, lat in coordinates
-            if -90 <= lat <= 90 and -180 <= lon <= 180
-        ]
+        # Filter to valid coordinates only (keeping track of valid indices)
+        valid_indices = []
+        valid_coords = []
+        for idx, (lon, lat) in enumerate(coordinates):
+            if -90 <= lat <= 90 and -180 <= lon <= 180:
+                valid_indices.append(idx)
+                valid_coords.append((lon, lat))
         
         if len(valid_coords) == 0:
             raise HTTPException(
                 status_code=400,
                 detail="No valid coordinates found in shapefile"
             )
+        
+        # Create a filtered point IDs mapping for only valid coordinates
+        valid_point_ids_mapping = {i: point_ids_mapping[idx] for i, idx in enumerate(valid_indices)}
 
         power_dataset_overrides = None
         if config.ENABLE_NASA_POWER:
@@ -725,6 +731,7 @@ async def download_icasa_multi(
             rain_source=rain_source,
             site_code=config.DEFAULT_SITE_CODE,
             selected_variables=selected_vars,
+            point_ids_mapping=valid_point_ids_mapping,
         )
         
         # Create zip file
@@ -745,7 +752,8 @@ async def download_icasa_multi(
                 'total_points': len(valid_coords),
                 'data_source': source_desc,
                 'rain_source': rain_source
-            }
+            },
+            shapefile_path=shp_path
         )
         
         logger.info(f"Successfully generated package with {len(files)} files")
