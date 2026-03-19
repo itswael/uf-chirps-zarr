@@ -127,9 +127,15 @@ class ApiClient {
     start_date: string;
     end_date: string;
     rain_source?: string;
+    selected_parameters?: string[];
   }) {
+    const queryParams: any = {
+      ...params,
+      selected_parameters: params.selected_parameters?.join(','),
+    };
+
     const response = await this.client.post('/api/download/icasa', null, {
-      params,
+      params: queryParams,
       responseType: 'blob',
     });
     
@@ -173,12 +179,16 @@ class ApiClient {
     start_date: string;
     end_date: string;
     rain_source?: string;
+    selected_parameters?: string[];
   }) {
     const formData = new FormData();
     formData.append('shapefile', params.file);
     formData.append('start_date', params.start_date);
     formData.append('end_date', params.end_date);
-    formData.append('rain_source', params.rain_source || 'both');
+    formData.append('rain_source', params.rain_source || 'chirps');
+    if (params.selected_parameters && params.selected_parameters.length > 0) {
+      formData.append('selected_parameters', params.selected_parameters.join(','));
+    }
 
     const response = await this.client.post('/api/download/icasa-multi', formData, {
       headers: {
