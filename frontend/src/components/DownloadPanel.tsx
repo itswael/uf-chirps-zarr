@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Paper,
   Box,
@@ -17,21 +17,28 @@ import {
   ListItem,
   ListItemText,
   IconButton,
-  Tooltip,
   CircularProgress,
   Select,
   MenuItem,
   FormControl,
   InputLabel,
   SelectChangeEvent,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  FormGroup,
+  FormControlLabel,
+  Checkbox,
+  Grid,
 } from '@mui/material';
 import {
   Download,
   LocationOn,
   CalendarToday,
   CloudUpload,
-  Info,
   Close,
+  Tune,
 } from '@mui/icons-material';
 import { apiClient } from '@/utils/api';
 
@@ -41,14 +48,25 @@ interface DownloadPanelProps {
   endDate: string;
 }
 
+const MET_PARAMETER_OPTIONS = ['T2M', 'TMAX', 'TMIN', 'TDEW', 'RH2M', 'WIND', 'SRAD'];
+
+function getParameterOptions(rainSource: string): string[] {
+  if (rainSource === 'both') {
+    return ['RAIN1', 'RAIN2', ...MET_PARAMETER_OPTIONS];
+  }
+  return ['RAIN', ...MET_PARAMETER_OPTIONS];
+}
+
 export default function DownloadPanel({ location, startDate, endDate }: DownloadPanelProps) {
   const [tabValue, setTabValue] = useState(0);
   const [downloading, setDownloading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
-  // Rain source selection
-  const [rainSource, setRainSource] = useState<string>('both');
+
+  // Default rain source is CHIRPS and all parameters are preselected.
+  const [rainSource, setRainSource] = useState<string>('chirps');
+  const [selectedParameters, setSelectedParameters] = useState<string[]>(getParameterOptions('chirps'));
+  const [parameterDialogOpen, setParameterDialogOpen] = useState(false);
 
   // Multi-point download state
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -56,20 +74,46 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
   const [validating, setValidating] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
+  const parameterOptions = useMemo(() => getParameterOptions(rainSource), [rainSource]);
+  const selectedCount = selectedParameters.length;
+
+  const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);
-    // Reset errors when switching tabs
     setError(null);
     setValidationError(null);
   };
 
   const handleRainSourceChange = (event: SelectChangeEvent) => {
-    setRainSource(event.target.value);
+    const nextSource = event.target.value;
+    setRainSource(nextSource);
+    setSelectedParameters(getParameterOptions(nextSource));
+  };
+
+  const handleToggleParameter = (parameter: string) => {
+    setSelectedParameters((prev) => {
+      if (prev.includes(parameter)) {
+        return prev.filter((p) => p !== parameter);
+      }
+      return [...prev, parameter];
+    });
+  };
+
+  const handleSelectAllParameters = () => {
+    setSelectedParameters(parameterOptions);
+  };
+
+  const handleClearAllParameters = () => {
+    setSelectedParameters([]);
   };
 
   const handleSingleDownload = async () => {
     if (!location) {
       setError('Please select a location on the map first');
+      return;
+    }
+
+    if (selectedParameters.length === 0) {
+      setError('Please select at least one parameter');
       return;
     }
 
@@ -83,6 +127,7 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
         start_date: startDate,
         end_date: endDate,
         rain_source: rainSource,
+        selected_parameters: selectedParameters,
       });
       setSuccess(true);
     } catch (err: any) {
@@ -98,22 +143,21 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
 
     const file = files[0];
     const fileName = file.name.toLowerCase();
-    
+
     if (!fileName.endsWith('.shp')) {
       setValidationError('Please select a .shp file');
       return;
     }
-    
+
     setSelectedFile(file);
     setValidationInfo(null);
     setValidationError(null);
 
-    // Validate the shapefile
     setValidating(true);
     try {
       const result = await apiClient.validateShapefile(file);
       setValidationInfo(result);
-      
+
       if (!result.valid) {
         setValidationError(result.message);
       }
@@ -136,6 +180,11 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
       return;
     }
 
+    if (selectedParameters.length === 0) {
+      setError('Please select at least one parameter');
+      return;
+    }
+
     setDownloading(true);
     setError(null);
 
@@ -145,6 +194,7 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
         start_date: startDate,
         end_date: endDate,
         rain_source: rainSource,
+        selected_parameters: selectedParameters,
       });
       setSuccess(true);
     } catch (err: any) {
@@ -174,14 +224,13 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
           </Tabs>
         </Box>
 
-        {/* Tab Panel 0: Single Location Download */}
         {tabValue === 0 && (
           <Stack spacing={2}>
             <Box>
               <Typography variant="subtitle2" gutterBottom>
                 Selected Parameters:
               </Typography>
-              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="center">
                 {location ? (
                   <Chip
                     icon={<LocationOn />}
@@ -206,21 +255,16 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
                   color="primary"
                   variant="outlined"
                 />
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => setParameterDialogOpen(true)}
+                  startIcon={<Tune fontSize="small" />}
+                >
+                  Parameters
+                </Button>
               </Stack>
             </Box>
-{/* Rain Data Source Selector */}
-            <FormControl fullWidth size="small">
-              <InputLabel>Rain Data Source</InputLabel>
-              <Select
-                value={rainSource}
-                onChange={handleRainSourceChange}
-                label="Rain Data Source"
-              >
-                <MenuItem value="chirps">CHIRPS Only</MenuItem>
-                <MenuItem value="nasa_power">NASA POWER Only</MenuItem>
-                <MenuItem value="both">Both (CHIRPS + NASA POWER)</MenuItem>
-              </Select>
-            </FormControl>
 
             <Alert severity="info" sx={{ fontSize: '0.875rem' }}>
               <Typography variant="caption" display="block" gutterBottom>
@@ -237,7 +281,6 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
               </Typography>
             </Alert>
 
-            
             <Alert severity="info" sx={{ fontSize: '0.875rem' }}>
               <Typography variant="caption" display="block" gutterBottom>
                 <strong>ICASA Format Details:</strong>
@@ -259,7 +302,7 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
               size="large"
               fullWidth
               onClick={handleSingleDownload}
-              disabled={!location || downloading}
+              disabled={!location || downloading || selectedParameters.length === 0}
               startIcon={<Download />}
             >
               {downloading ? 'Preparing Download...' : 'Download ICASA Format'}
@@ -273,7 +316,6 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
           </Stack>
         )}
 
-        {/* Tab Panel 1: Multi-Point Shapefile Download */}
         {tabValue === 1 && (
           <Stack spacing={2}>
             <Alert severity="info" sx={{ fontSize: '0.875rem' }}>
@@ -292,18 +334,9 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
             </Alert>
 
             <Box>
-              <Button
-                variant="outlined"
-                component="label"
-                startIcon={<CloudUpload />}
-              >
+              <Button variant="outlined" component="label" startIcon={<CloudUpload />}>
                 {selectedFile ? selectedFile.name : 'Select Shapefile (.shp)'}
-                <input
-                  type="file"
-                  hidden
-                  accept=".shp"
-                  onChange={handleFileSelect}
-                />
+                <input type="file" hidden accept=".shp" onChange={handleFileSelect} />
               </Button>
               <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
                 Upload just the .shp file. Missing .shx and .dbf components will be auto-generated.
@@ -323,9 +356,7 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
               <Paper variant="outlined" sx={{ p: 2 }}>
                 <Stack spacing={1}>
                   <Box display="flex" justifyContent="space-between" alignItems="center">
-                    <Typography variant="subtitle2">
-                      {selectedFile.name}
-                    </Typography>
+                    <Typography variant="subtitle2">{selectedFile.name}</Typography>
                     <IconButton size="small" onClick={handleRemoveFile}>
                       <Close fontSize="small" />
                     </IconButton>
@@ -335,17 +366,11 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
                     <>
                       <List dense>
                         <ListItem>
-                          <ListItemText
-                            primary="Total Points"
-                            secondary={validationInfo.total_points}
-                          />
+                          <ListItemText primary="Total Points" secondary={validationInfo.total_points} />
                         </ListItem>
                         {validationInfo.valid_points !== undefined && (
                           <ListItem>
-                            <ListItemText
-                              primary="Valid Points"
-                              secondary={validationInfo.valid_points}
-                            />
+                            <ListItemText primary="Valid Points" secondary={validationInfo.valid_points} />
                           </ListItem>
                         )}
                       </List>
@@ -367,9 +392,7 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
 
                       {validationInfo.issues && validationInfo.issues.length > 0 && (
                         <Alert severity="warning" sx={{ fontSize: '0.75rem' }}>
-                          <Typography variant="caption">
-                            {validationInfo.issues.join(', ')}
-                          </Typography>
+                          <Typography variant="caption">{validationInfo.issues.join(', ')}</Typography>
                         </Alert>
                       )}
                     </>
@@ -378,15 +401,13 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
               </Paper>
             )}
 
-            {validationError && (
-              <Alert severity="error">{validationError}</Alert>
-            )}
+            {validationError && <Alert severity="error">{validationError}</Alert>}
 
             <Box>
               <Typography variant="subtitle2" gutterBottom>
                 Date Range:
               </Typography>
-              <Stack direction="row" spacing={1}>
+              <Stack direction="row" spacing={1} alignItems="center">
                 <Chip
                   icon={<CalendarToday />}
                   label={`${startDate} to ${endDate}`}
@@ -394,6 +415,14 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
                   color="primary"
                   variant="outlined"
                 />
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => setParameterDialogOpen(true)}
+                  startIcon={<Tune fontSize="small" />}
+                >
+                  Parameters
+                </Button>
               </Stack>
             </Box>
 
@@ -403,7 +432,7 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
               size="large"
               fullWidth
               onClick={handleMultiDownload}
-              disabled={!selectedFile || !validationInfo?.valid || downloading}
+              disabled={!selectedFile || !validationInfo?.valid || downloading || selectedParameters.length === 0}
               startIcon={downloading ? <CircularProgress size={20} color="inherit" /> : <Download />}
             >
               {downloading
@@ -444,6 +473,62 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
           {error}
         </Alert>
       </Snackbar>
+
+      <Dialog open={parameterDialogOpen} onClose={() => setParameterDialogOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle>ICASA Parameter Selection</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <FormControl fullWidth size="small">
+              <InputLabel>Rain Data Source</InputLabel>
+              <Select value={rainSource} onChange={handleRainSourceChange} label="Rain Data Source">
+                <MenuItem value="chirps">CHIRPS Only</MenuItem>
+                <MenuItem value="nasa_power">NASA POWER Only</MenuItem>
+                <MenuItem value="both">Both (CHIRPS + NASA POWER)</MenuItem>
+              </Select>
+            </FormControl>
+
+            <Box display="flex" justifyContent="space-between" alignItems="center">
+              <Typography variant="subtitle2">
+                Parameters ({selectedCount}/{parameterOptions.length} selected)
+              </Typography>
+              <Stack direction="row" spacing={1}>
+                <Button size="small" onClick={handleSelectAllParameters}>
+                  Select All
+                </Button>
+                <Button size="small" onClick={handleClearAllParameters}>
+                  Clear
+                </Button>
+              </Stack>
+            </Box>
+
+            <Grid container spacing={1}>
+              {parameterOptions.map((parameter) => (
+                <Grid item xs={6} key={parameter}>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        size="small"
+                        checked={selectedParameters.includes(parameter)}
+                        onChange={() => handleToggleParameter(parameter)}
+                      />
+                    }
+                    label={parameter}
+                  />
+                </Grid>
+              ))}
+            </Grid>
+
+            {selectedParameters.length === 0 && (
+              <Alert severity="warning" sx={{ fontSize: '0.75rem' }}>
+                Select at least one parameter to include in the ICASA file.
+              </Alert>
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setParameterDialogOpen(false)}>Done</Button>
+        </DialogActions>
+      </Dialog>
     </>
   );
 }
