@@ -30,6 +30,7 @@ import {
   FormGroup,
   FormControlLabel,
   Checkbox,
+  Grid,
 } from '@mui/material';
 import {
   Download,
@@ -500,21 +501,22 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
               </Stack>
             </Box>
 
-            <FormGroup>
+            <Grid container spacing={1}>
               {parameterOptions.map((parameter) => (
-                <FormControlLabel
-                  key={parameter}
-                  control={
-                    <Checkbox
-                      size="small"
-                      checked={selectedParameters.includes(parameter)}
-                      onChange={() => handleToggleParameter(parameter)}
-                    />
-                  }
-                  label={parameter}
-                />
+                <Grid item xs={6} key={parameter}>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        size="small"
+                        checked={selectedParameters.includes(parameter)}
+                        onChange={() => handleToggleParameter(parameter)}
+                      />
+                    }
+                    label={parameter}
+                  />
+                </Grid>
               ))}
-            </FormGroup>
+            </Grid>
 
             {selectedParameters.length === 0 && (
               <Alert severity="warning" sx={{ fontSize: '0.75rem' }}>
