@@ -144,29 +144,31 @@ class EnhancedIcasaGenerator:
         lon: float,
         start_date: str,
         end_date: str,
-        point_id: Optional[int] = None
+        point_id: Optional[str] = None
     ) -> str:
         """
         Create standardized filename for ICASA weather file.
+        If point_id is provided (from shapefile/geojson), use it directly as filename.
         
         Args:
             lat: Latitude
             lon: Longitude
             start_date: Start date (YYYY-MM-DD)
             end_date: End date (YYYY-MM-DD)
-            point_id: Optional point identifier for multi-point downloads
+            point_id: Optional point identifier from data source (shapefile, geojson, etc.)
             
         Returns:
             Filename string
         """
-        # Clean up coordinates for filename
+        # If a point ID is provided from the data source, use it directly as filename
+        if point_id is not None:
+            return f"{point_id}.WTH"
+        
+        # Otherwise, create filename from coordinates
         lat_str = f"{abs(lat):.4f}{'N' if lat >= 0 else 'S'}"
         lon_str = f"{abs(lon):.4f}{'E' if lon >= 0 else 'W'}"
         
-        if point_id is not None:
-            return f"weather_point{point_id:04d}_{lat_str}_{lon_str}.WTH"
-        else:
-            return f"weather_{lat_str}_{lon_str}_{start_date.replace('-', '')}_{end_date.replace('-', '')}.WTH"
+        return f"weather_{lat_str}_{lon_str}_{start_date.replace('-', '')}_{end_date.replace('-', '')}.WTH"
 
 
 class EnhancedIcasaBatchGenerator:
@@ -200,6 +202,7 @@ class EnhancedIcasaBatchGenerator:
         rain_source: str = "both",
         site_code: str = "UFLC",
         selected_variables: Optional[List[str]] = None,
+        point_ids_mapping: Optional[Dict[int, str]] = None,
     ) -> Dict[str, str]:
         """
         Generate ICASA files for multiple coordinates using merged data in parallel.
@@ -211,6 +214,8 @@ class EnhancedIcasaBatchGenerator:
             merger: WeatherDataMerger instance
             rain_source: Rain data source - "chirps", "nasa_power", or "both"
             site_code: Site identifier code
+            selected_variables: Optional list of variables to include in output
+            point_ids_mapping: Optional dict mapping coordinate index to point ID (from shapefile/geojson)
             
         Returns:
             Dictionary mapping filenames to file contents
@@ -224,9 +229,12 @@ class EnhancedIcasaBatchGenerator:
         # Create tasks for all coordinates
         tasks = []
         for i, (lon, lat) in enumerate(coordinates):
+            # Get point ID from mapping, or use index-based ID as fallback
+            point_id = point_ids_mapping.get(i) if point_ids_mapping else None
+            
             task = self._generate_single_point(
                 semaphore=semaphore,
-                point_id=i+1,
+                point_id=point_id,
                 lon=lon,
                 lat=lat,
                 start_date=start_date,
@@ -268,7 +276,7 @@ class EnhancedIcasaBatchGenerator:
     async def _generate_single_point(
         self,
         semaphore: asyncio.Semaphore,
-        point_id: int,
+        point_id: Optional[str],
         lon: float,
         lat: float,
         start_date: str,
@@ -298,7 +306,7 @@ class EnhancedIcasaBatchGenerator:
                     include_met=True
                 )
                 
-                # Generate filename
+                # Generate filename using point ID if available
                 filename = self.generator.create_filename(
                     lat=lat,
                     lon=lon,
@@ -318,14 +326,14 @@ class EnhancedIcasaBatchGenerator:
                     selected_variables=selected_variables,
                 )
                 
-                # Log progress periodically (every 10 points or on key milestones)
-                if point_id % 10 == 0 or point_id == total_points:
-                    logger.info(f"Progress: {point_id}/{total_points} points completed")
+                # Log progress for point-based IDs
+                if point_id is not None:
+                    logger.debug(f"Generated ICASA file for point {point_id}")
                 
                 return (filename, content)
                 
             except Exception as e:
-                logger.error(f"Error generating ICASA file for point {point_id} ({lat}, {lon}): {e}")
+                logger.error(f"Error generating ICASA file for point ({lat}, {lon}): {e}")
                 return None
     
     def _get_source_description(self, rain_source: str) -> str:
