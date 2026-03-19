@@ -41,11 +41,100 @@ class ShapefileProcessor:
         }
     
     @staticmethod
+    def extract_coordinates_and_ids_from_file(
+        file_path: Path
+    ) -> Tuple[List[Tuple[float, float]], Dict[int, str]]:
+        """
+        Extract coordinates and point IDs from a spatial file (shapefile or geojson).
+        Supports shapefile (.shp), GeoJSON (.geojson, .json) and other formats supported by geopandas.
+        
+        Args:
+            file_path: Path to the shapefile (.shp) or geojson (.geojson, .json) file
+            
+        Returns:
+            Tuple of (coordinates_list, id_mapping)
+            - coordinates_list: List of (longitude, latitude) tuples
+            - id_mapping: Dict mapping index to point ID
+        """
+        if gpd is None:
+            raise ImportError("geopandas is required. Install with: pip install geopandas shapely")
+        
+        try:
+            # Read the file using geopandas (supports shapefiles, geojson, etc.)
+            gdf = gpd.read_file(str(file_path))
+            logger.info(f"Loaded {len(gdf)} features from {file_path}")
+            
+            coordinates = []
+            id_mapping = {}  # Maps index to point ID
+            coord_index = 0
+            
+            # Look for ID column - check common naming conventions
+            id_column = None
+            for col_name in ['id', 'ID', 'point_id', 'POINT_ID', 'pid', 'PID']:
+                if col_name in gdf.columns:
+                    id_column = col_name
+                    logger.info(f"Found ID column: {id_column}")
+                    break
+            
+            # Extract coordinates and IDs from each feature
+            for feature_idx, (idx, row) in enumerate(gdf.iterrows()):
+                geom = row.geometry
+                # Use ID from column if exists, otherwise use feature index
+                point_id = str(row[id_column]) if id_column else str(feature_idx + 1)
+                
+                if geom.is_empty:
+                    continue
+                
+                # Handle different geometry types
+                feature_coords = []
+                if geom.geom_type == 'Point':
+                    feature_coords = [(geom.x, geom.y)]
+                
+                elif geom.geom_type == 'MultiPoint':
+                    feature_coords = [(point.x, point.y) for point in geom.geoms]
+                
+                elif geom.geom_type in ['LineString', 'MultiLineString']:
+                    if geom.geom_type == 'LineString':
+                        feature_coords = list(geom.coords)
+                    else:
+                        feature_coords = [coord for line in geom.geoms for coord in line.coords]
+                
+                elif geom.geom_type in ['Polygon', 'MultiPolygon']:
+                    if geom.geom_type == 'Polygon':
+                        feature_coords = list(geom.exterior.coords)
+                    else:
+                        feature_coords = [coord for poly in geom.geoms for coord in poly.exterior.coords]
+                
+                # Add extracted coordinates with their ID mapping
+                for coord in feature_coords:
+                    rounded = (round(coord[0], 4), round(coord[1], 4))
+                    # Check if this coordinate was already added (deduplicate)
+                    is_duplicate = False
+                    for existing_idx in range(len(coordinates)):
+                        if existing_idx < len(coordinates):
+                            existing_coord = coordinates[existing_idx]
+                            if (round(existing_coord[0], 4), round(existing_coord[1], 4)) == rounded:
+                                is_duplicate = True
+                                break
+                    
+                    if not is_duplicate:
+                        id_mapping[coord_index] = point_id
+                        coordinates.append(coord)
+                        coord_index += 1
+            
+            logger.info(f"Extracted {len(coordinates)} coordinates with {len(set(id_mapping.values()))} unique point IDs")
+            return coordinates, id_mapping
+            
+        except Exception as e:
+            logger.error(f"Error extracting coordinates from file: {e}")
+            raise ValueError(f"Failed to process file: {str(e)}")
+    
+    @staticmethod
     def extract_coordinates_from_shapefile(
         shapefile_path: Path
     ) -> List[Tuple[float, float]]:
         """
-        Extract coordinates from a shapefile.
+        Extract coordinates from a shapefile (legacy method for backward compatibility).
         
         Args:
             shapefile_path: Path to the .shp file
@@ -53,61 +142,9 @@ class ShapefileProcessor:
         Returns:
             List of (longitude, latitude) tuples
         """
-        if gpd is None:
-            raise ImportError("geopandas is required. Install with: pip install geopandas shapely")
-        
-        try:
-            # Read the shapefile using geopandas
-            # This will work even if .shx and .dbf are missing thanks to SHAPE_RESTORE_SHX
-            gdf = gpd.read_file(str(shapefile_path))
-            
-            coordinates = []
-            
-            # Extract coordinates based on geometry type
-            for geom in gdf.geometry:
-                if geom.is_empty:
-                    continue
-                    
-                # Handle different geometry types
-                if geom.geom_type == 'Point':
-                    coordinates.append((geom.x, geom.y))
-                
-                elif geom.geom_type == 'MultiPoint':
-                    for point in geom.geoms:
-                        coordinates.append((point.x, point.y))
-                
-                elif geom.geom_type in ['LineString', 'MultiLineString']:
-                    # Extract all points from line
-                    if geom.geom_type == 'LineString':
-                        coords = list(geom.coords)
-                    else:
-                        coords = [coord for line in geom.geoms for coord in line.coords]
-                    coordinates.extend(coords)
-                
-                elif geom.geom_type in ['Polygon', 'MultiPolygon']:
-                    # Extract all vertices from polygon
-                    if geom.geom_type == 'Polygon':
-                        coords = list(geom.exterior.coords)
-                    else:
-                        coords = [coord for poly in geom.geoms for coord in poly.exterior.coords]
-                    coordinates.extend(coords)
-            
-            # Remove duplicates while preserving order
-            seen = set()
-            unique_coordinates = []
-            for coord in coordinates:
-                # Round to 4 decimal places to identify near-duplicates
-                rounded = (round(coord[0], 4), round(coord[1], 4))
-                if rounded not in seen:
-                    seen.add(rounded)
-                    unique_coordinates.append(coord)
-            
-            logger.info(f"Extracted {len(unique_coordinates)} unique coordinates from shapefile")
-            return unique_coordinates
-            
-        except Exception as e:
-            logger.error(f"Error extracting coordinates from shapefile: {e}")
-            raise ValueError(f"Failed to process shapefile: {str(e)}")
+        # Use the new method and return only coordinates
+        coordinates, _ = ShapefileProcessor.extract_coordinates_and_ids_from_file(shapefile_path)
+        return coordinates
     
     @staticmethod
     def save_uploaded_shapefile(
@@ -210,6 +247,71 @@ class ShapefileProcessor:
             # Clean up temp directory on error
             shutil.rmtree(temp_dir, ignore_errors=True)
             raise
+    
+    @staticmethod
+    def validate_coordinates_with_ids(
+        coordinates: List[Tuple[float, float]],
+        id_mapping: Dict[int, str],
+        max_points: int = 1000,
+        lat_bounds: Tuple[float, float] = (-90, 90),
+        lon_bounds: Tuple[float, float] = (-180, 180)
+    ) -> Dict[str, Any]:
+        """
+        Validate extracted coordinates with IDs.
+        
+        Args:
+            coordinates: List of (lon, lat) tuples
+            id_mapping: Dict mapping index to point ID
+            max_points: Maximum allowed points
+            lat_bounds: Valid latitude range
+            lon_bounds: Valid longitude range
+            
+        Returns:
+            Validation result dict with status and messages
+        """
+        issues = []
+        
+        # Check point count
+        if len(coordinates) == 0:
+            return {
+                "valid": False,
+                "message": "No coordinates found in file",
+                "issues": ["Empty file"]
+            }
+        
+        if len(coordinates) > max_points:
+            return {
+                "valid": False,
+                "message": f"Too many points: {len(coordinates)} (max: {max_points})",
+                "issues": [f"Exceeds maximum point limit of {max_points}"]
+            }
+        
+        # Check coordinate validity
+        valid_coordinates = []
+        for i, (lon, lat) in enumerate(coordinates):
+            point_id = id_mapping.get(i, str(i+1))
+            if not (lat_bounds[0] <= lat <= lat_bounds[1]):
+                issues.append(f"Point {point_id}: Latitude {lat} out of bounds")
+            elif not (lon_bounds[0] <= lon <= lon_bounds[1]):
+                issues.append(f"Point {point_id}: Longitude {lon} out of bounds")
+            else:
+                valid_coordinates.append((lon, lat))
+        
+        if len(valid_coordinates) == 0:
+            return {
+                "valid": False,
+                "message": "No valid coordinates found",
+                "issues": issues[:10]
+            }
+        
+        return {
+            "valid": True,
+            "message": f"Found {len(valid_coordinates)} valid coordinates",
+            "total_points": len(coordinates),
+            "valid_points": len(valid_coordinates),
+            "invalid_points": len(coordinates) - len(valid_coordinates),
+            "issues": issues[:5] if issues else []
+        }
     
     @staticmethod
     def validate_coordinates(
