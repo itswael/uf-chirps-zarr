@@ -95,15 +95,15 @@ class ShapefileProcessor:
                 
                 elif geom.geom_type in ['LineString', 'MultiLineString']:
                     if geom.geom_type == 'LineString':
-                        feature_coords = list(geom.coords)
+                        feature_coords = [(coord[0], coord[1]) for coord in geom.coords]
                     else:
-                        feature_coords = [coord for line in geom.geoms for coord in line.coords]
+                        feature_coords = [(coord[0], coord[1]) for line in geom.geoms for coord in line.coords]
                 
                 elif geom.geom_type in ['Polygon', 'MultiPolygon']:
                     if geom.geom_type == 'Polygon':
-                        feature_coords = list(geom.exterior.coords)
+                        feature_coords = [(coord[0], coord[1]) for coord in geom.exterior.coords]
                     else:
-                        feature_coords = [coord for poly in geom.geoms for coord in poly.exterior.coords]
+                        feature_coords = [(coord[0], coord[1]) for poly in geom.geoms for coord in poly.exterior.coords]
                 
                 # Add extracted coordinates with their ID mapping
                 for coord in feature_coords:
@@ -149,33 +149,115 @@ class ShapefileProcessor:
     @staticmethod
     def save_uploaded_shapefile(
         uploaded_file: bytes,
-        filename: str
+        filename: str,
+        additional_files: Optional[Dict[str, bytes]] = None
     ) -> Path:
         """
         Save uploaded shapefile to temporary location.
+        Supports single .shp file or multiple files (.shp, .shx, .dbf, .geojson, .json).
         
         Args:
-            uploaded_file: File content as bytes
-            filename: Original filename
+            uploaded_file: File content as bytes (primary file)
+            filename: Original filename of primary file
+            additional_files: Optional dict mapping filenames to file contents for companion files
             
         Returns:
-            Path to the saved .shp file
+            Path to the saved spatial file (.shp or .geojson)
+            
+        Raises:
+            ValueError: If file format is invalid or required companion files are missing
         """
         # Create temporary directory
         temp_dir = Path(tempfile.mkdtemp())
         
         try:
-            # Save the uploaded file
-            shp_path = temp_dir / filename
-            with open(shp_path, 'wb') as f:
-                f.write(uploaded_file)
+            # Determine file type
+            filename_lower = filename.lower()
             
-            return shp_path
+            # Handle zip file containing shapefile components
+            if filename_lower.endswith('.zip'):
+                zip_path = temp_dir / filename
+                with open(zip_path, 'wb') as f:
+                    f.write(uploaded_file)
+                
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    zip_ref.extractall(temp_dir)
+                
+                # Find spatial file in extracted contents
+                shp_files = list(temp_dir.glob('**/*.shp'))
+                geojson_files = list(temp_dir.glob('**/*.geojson')) + list(temp_dir.glob('**/*.json'))
+                
+                if shp_files:
+                    shp_path = shp_files[0]
+                    # Verify companion files exist
+                    base_path = shp_path.with_suffix('')
+                    required_files = {
+                        'shx': base_path.with_suffix('.shx'),
+                        'dbf': base_path.with_suffix('.dbf')
+                    }
+                    
+                    missing = [name for name, path in required_files.items() if not path.exists()]
+                    if missing:
+                        raise ValueError(
+                            f"Incomplete shapefile in zip. Missing: {', '.join(missing).upper()}. "
+                            f"Required files: .shp, .shx, .dbf"
+                        )
+                    return shp_path
+                
+                elif geojson_files:
+                    return geojson_files[0]
+                
+                else:
+                    raise ValueError("No spatial file (.shp or .geojson) found in zip archive")
+            
+            # Handle GeoJSON files
+            elif filename_lower.endswith(('.geojson', '.json')):
+                spatial_path = temp_dir / filename
+                with open(spatial_path, 'wb') as f:
+                    f.write(uploaded_file)
+                return spatial_path
+            
+            # Handle shapefile .shp file
+            elif filename_lower.endswith('.shp'):
+                shp_path = temp_dir / filename
+                with open(shp_path, 'wb') as f:
+                    f.write(uploaded_file)
+                
+                # Save companion files if provided
+                base_name = filename[:-4]  # Remove .shp extension
+                required_companions = ['.shx', '.dbf']
+                saved_companions = []
+                
+                if additional_files:
+                    for ext in required_companions:
+                        for provided_name, content in additional_files.items():
+                            if provided_name.lower().endswith(ext):
+                                companion_path = temp_dir / f"{base_name}{ext}"
+                                with open(companion_path, 'wb') as f:
+                                    f.write(content)
+                                saved_companions.append(ext)
+                                break
+                
+                # Check if all required companions are present
+                missing = [ext for ext in required_companions if ext not in saved_companions]
+                if missing:
+                    raise ValueError(
+                        f"Incomplete shapefile. Missing required files: {', '.join(missing)}. "
+                        f"Please provide all three files: .shp, .shx, .dbf"
+                    )
+                
+                return shp_path
+            
+            else:
+                raise ValueError(
+                    f"Unsupported file format: {filename}. "
+                    f"Supported formats: .shp (with .shx, .dbf), .geojson, .json, .zip"
+                )
             
         except Exception as e:
             # Clean up temp directory on error
             shutil.rmtree(temp_dir, ignore_errors=True)
-            raise ValueError(f"Failed to save shapefile: {str(e)}")
+            raise ValueError(f"Failed to save spatial file: {str(e)}")
     
     @staticmethod
     def extract_shapefile_from_upload(

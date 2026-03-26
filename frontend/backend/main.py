@@ -625,21 +625,28 @@ async def download_icasa(
 
 @app.post("/api/download/icasa-multi")
 async def download_icasa_multi(
-    shapefile: UploadFile = File(..., description="Shapefile (.shp)"),
+    shapefile: UploadFile = File(..., description="Shapefile (.shp, .geojson, .json, or .zip)"),
     start_date: str = Form(...),
     end_date: str = Form(...),
     rain_source: str = Form("both", description="Rain data source: chirps, nasa_power, or both"),
     selected_parameters: Optional[str] = Form(
         None,
         description="Comma-separated ICASA parameters to include (e.g., RAIN,TMAX,TMIN)"
-    )
+    ),
+    shapefile_shx: Optional[UploadFile] = File(None, description="Shapefile .shx companion file"),
+    shapefile_dbf: Optional[UploadFile] = File(None, description="Shapefile .dbf companion file")
 ):
     """
-    Download ICASA weather data for multiple points from a shapefile.
-    Includes CHIRPS and NASA POWER data with configurable rain source.
+    Download ICASA weather data for multiple points from a spatial file.
+    Supports shapefiles (.shp with .shx and .dbf), GeoJSON, and zip archives.
     Returns a zip file containing individual ICASA files for each coordinate.
     
-    Note: Only the .shp file is required. Missing .shx and .dbf files will be auto-generated.
+    Shapefile users can upload:
+    - A .zip file containing .shp, .shx, and .dbf files
+    - Just the .shp file with optional .shx and .dbf files as companion uploads
+    
+    GeoJSON users can upload:
+    - A .geojson or .json file directly
     """
     temp_dir = None
     
@@ -656,17 +663,28 @@ async def download_icasa_multi(
         # Read uploaded file
         shp_content = await shapefile.read()
         
-        # Save shapefile
-        filename = shapefile.filename or 'shapefile.shp'
-        shp_path = ShapefileProcessor.save_uploaded_shapefile(
-            uploaded_file=shp_content,
-            filename=filename
-        )
-        temp_dir = shp_path.parent
+        # Collect additional files if provided
+        additional_files = {}
+        if shapefile_shx:
+            shx_content = await shapefile_shx.read()
+            additional_files[shapefile_shx.filename or 'file.shx'] = shx_content
         
-        # Extract coordinates and point IDs from shapefile
+        if shapefile_dbf:
+            dbf_content = await shapefile_dbf.read()
+            additional_files[shapefile_dbf.filename or 'file.dbf'] = dbf_content
+        
+        # Save spatial file
+        filename = shapefile.filename or 'spatial_file'
+        spatial_path = ShapefileProcessor.save_uploaded_shapefile(
+            uploaded_file=shp_content,
+            filename=filename,
+            additional_files=additional_files if additional_files else None
+        )
+        temp_dir = spatial_path.parent
+        
+        # Extract coordinates and point IDs from file
         logger.info(f"Extracting coordinates and point IDs from: {filename}")
-        coordinates, point_ids_mapping = ShapefileProcessor.extract_coordinates_and_ids_from_file(shp_path)
+        coordinates, point_ids_mapping = ShapefileProcessor.extract_coordinates_and_ids_from_file(spatial_path)
         
         # Validate coordinates with IDs
         validation = ShapefileProcessor.validate_coordinates_with_ids(
@@ -753,7 +771,7 @@ async def download_icasa_multi(
                 'data_source': source_desc,
                 'rain_source': rain_source
             },
-            shapefile_path=shp_path
+            shapefile_path=spatial_path
         )
         
         logger.info(f"Successfully generated package with {len(files)} files")
@@ -783,13 +801,18 @@ async def download_icasa_multi(
 
 @app.post("/api/validate-shapefile")
 async def validate_shapefile(
-    shapefile: UploadFile = File(..., description="Shapefile (.shp)")
+    shapefile: UploadFile = File(..., description="Shapefile (.shp, .geojson, .json, or .zip)"),
+    shapefile_shx: Optional[UploadFile] = File(None, description="Shapefile .shx companion file"),
+    shapefile_dbf: Optional[UploadFile] = File(None, description="Shapefile .dbf companion file")
 ):
     """
-    Validate a shapefile and return coordinate information without processing.
+    Validate a spatial file (shapefile, GeoJSON) and return coordinate information without processing.
     Useful for preview before downloading.
     
-    Note: Only the .shp file is required. Missing .shx and .dbf files will be auto-generated.
+    Supports:
+    - Shapefiles (.shp with optional .shx and .dbf files)
+    - GeoJSON (.geojson, .json)
+    - Zip archives containing spatial files
     """
     temp_dir = None
     
@@ -797,16 +820,27 @@ async def validate_shapefile(
         # Read uploaded file
         shp_content = await shapefile.read()
         
-        # Save shapefile
-        filename = shapefile.filename or 'shapefile.shp'
-        shp_path = ShapefileProcessor.save_uploaded_shapefile(
+        # Collect additional files if provided
+        additional_files = {}
+        if shapefile_shx:
+            shx_content = await shapefile_shx.read()
+            additional_files[shapefile_shx.filename or 'file.shx'] = shx_content
+        
+        if shapefile_dbf:
+            dbf_content = await shapefile_dbf.read()
+            additional_files[shapefile_dbf.filename or 'file.dbf'] = dbf_content
+        
+        # Save spatial file
+        filename = shapefile.filename or 'spatial_file'
+        spatial_path = ShapefileProcessor.save_uploaded_shapefile(
             uploaded_file=shp_content,
-            filename=filename
+            filename=filename,
+            additional_files=additional_files if additional_files else None
         )
-        temp_dir = shp_path.parent
+        temp_dir = spatial_path.parent
         
         # Extract coordinates
-        coordinates = ShapefileProcessor.extract_coordinates_from_shapefile(shp_path)
+        coordinates, point_ids_mapping = ShapefileProcessor.extract_coordinates_and_ids_from_file(spatial_path)
         
         # Validate coordinates
         validation = ShapefileProcessor.validate_coordinates(
@@ -834,8 +868,8 @@ async def validate_shapefile(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error validating shapefile: {e}")
-        raise HTTPException(status_code=500, detail=f"Error validating shapefile: {str(e)}")
+        logger.error(f"Error validating spatial file: {e}")
+        raise HTTPException(status_code=500, detail=f"Error validating spatial file: {str(e)}")
     finally:
         # Clean up temporary directory
         if temp_dir and temp_dir.exists():
