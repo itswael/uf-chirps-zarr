@@ -156,12 +156,15 @@ class ApiClient {
   /**
    * Validate a shapefile before processing
    */
-  /**
-   * Validate a shapefile before processing
-   */
-  async validateShapefile(file: File) {
+  async validateShapefile(file: File, shxFile?: File, dbfFile?: File) {
     const formData = new FormData();
     formData.append('shapefile', file);
+    if (shxFile) {
+      formData.append('shapefile_shx', shxFile);
+    }
+    if (dbfFile) {
+      formData.append('shapefile_dbf', dbfFile);
+    }
     
     const response = await this.client.post('/api/validate-shapefile', formData, {
       headers: {
@@ -172,10 +175,12 @@ class ApiClient {
   }
 
   /**
-   * Download ICASA files for multiple points from shapefile
+   * Download ICASA files for multiple points from spatial file (shapefile or geojson)
    */
   async downloadIcasaMulti(params: {
     file: File;
+    shx_file?: File;
+    dbf_file?: File;
     start_date: string;
     end_date: string;
     rain_source?: string;
@@ -183,6 +188,12 @@ class ApiClient {
   }) {
     const formData = new FormData();
     formData.append('shapefile', params.file);
+    if (params.shx_file) {
+      formData.append('shapefile_shx', params.shx_file);
+    }
+    if (params.dbf_file) {
+      formData.append('shapefile_dbf', params.dbf_file);
+    }
     formData.append('start_date', params.start_date);
     formData.append('end_date', params.end_date);
     formData.append('rain_source', params.rain_source || 'chirps');
