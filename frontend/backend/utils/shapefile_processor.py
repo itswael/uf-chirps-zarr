@@ -70,9 +70,16 @@ class ShapefileProcessor:
             
             # Look for ID column - check common naming conventions
             id_column = None
-            for col_name in ['id', 'ID', 'point_id', 'POINT_ID', 'pid', 'PID']:
-                if col_name in gdf.columns:
-                    id_column = col_name
+            cols = [col.lower() for col in gdf.columns]
+            # for col_name in ['id', 'ID', 'point_id', 'POINT_ID', 'pid', 'PID']:
+            #     if col_name in gdf.columns:
+            #         id_column = col_name
+            #         logger.info(f"Found ID column: {id_column}")
+            #         break
+
+            for col_name in ['id', 'point_id', 'pid', 'cell_id']:
+                if col_name in cols:
+                    id_column = gdf.columns[cols.index(col_name)]
                     logger.info(f"Found ID column: {id_column}")
                     break
             
