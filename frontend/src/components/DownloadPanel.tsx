@@ -70,6 +70,7 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
 
   // Multi-point download state
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [companionFiles, setCompanionFiles] = useState<{ shx?: File; dbf?: File }>({});
   const [validationInfo, setValidationInfo] = useState<any>(null);
   const [validating, setValidating] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -141,29 +142,46 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
     const files = event.target.files;
     if (!files || files.length === 0) return;
 
-    const file = files[0];
-    const fileName = file.name.toLowerCase();
+    const newCompanionFiles = { ...companionFiles };
+    let primaryFile: File | null = null;
 
-    if (!fileName.endsWith('.shp')) {
-      setValidationError('Please select a .shp file');
+    // Process selected files
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const fileName = file.name.toLowerCase();
+
+      if (fileName.endsWith('.shp') || fileName.endsWith('.geojson') || fileName.endsWith('.json') || fileName.endsWith('.zip')) {
+        primaryFile = file;
+      } else if (fileName.endsWith('.shx')) {
+        newCompanionFiles.shx = file;
+      } else if (fileName.endsWith('.dbf')) {
+        newCompanionFiles.dbf = file;
+      }
+    }
+
+    // Validate primary file selection
+    if (!primaryFile) {
+      setValidationError('Please select a spatial file (.shp, .geojson, .json, or .zip)');
       return;
     }
 
-    setSelectedFile(file);
+    setSelectedFile(primaryFile);
+    setCompanionFiles(newCompanionFiles);
     setValidationInfo(null);
     setValidationError(null);
 
     setValidating(true);
     try {
-      const result = await apiClient.validateShapefile(file);
+      const result = await apiClient.validateShapefile(primaryFile, newCompanionFiles.shx, newCompanionFiles.dbf);
       setValidationInfo(result);
 
       if (!result.valid) {
         setValidationError(result.message);
       }
     } catch (err: any) {
-      setValidationError(err.response?.data?.detail || 'Failed to validate shapefile');
+      setValidationError(err.response?.data?.detail || 'Failed to validate spatial file');
       setSelectedFile(null);
+      setCompanionFiles({});
     } finally {
       setValidating(false);
     }
@@ -171,12 +189,12 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
 
   const handleMultiDownload = async () => {
     if (!selectedFile) {
-      setError('Please select a shapefile first');
+      setError('Please select a spatial file first');
       return;
     }
 
     if (!validationInfo?.valid) {
-      setError('Please select a valid shapefile');
+      setError('Please select a valid spatial file');
       return;
     }
 
@@ -191,6 +209,8 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
     try {
       await apiClient.downloadIcasaMulti({
         file: selectedFile,
+        shx_file: companionFiles.shx,
+        dbf_file: companionFiles.dbf,
         start_date: startDate,
         end_date: endDate,
         rain_source: rainSource,
@@ -206,6 +226,7 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
 
   const handleRemoveFile = () => {
     setSelectedFile(null);
+    setCompanionFiles({});
     setValidationInfo(null);
     setValidationError(null);
   };
@@ -323,7 +344,10 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
                 <strong>Multi-Point Download:</strong>
               </Typography>
               <Typography variant="caption" display="block">
-                • Upload a shapefile (.shp) to extract multiple coordinate points
+                • Upload a spatial file to extract multiple coordinate points
+              </Typography>
+              <Typography variant="caption" display="block">
+                • Supported formats: Shapefiles (.shp with .shx, .dbf), GeoJSON (.geojson, .json), or ZIP archives
               </Typography>
               <Typography variant="caption" display="block">
                 • System extracts all coordinates and creates one ICASA file per point
@@ -335,18 +359,24 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
 
             <Box>
               <Button variant="outlined" component="label" startIcon={<CloudUpload />}>
-                {selectedFile ? selectedFile.name : 'Select Shapefile (.shp)'}
-                <input type="file" hidden accept=".shp" onChange={handleFileSelect} />
+                {selectedFile ? selectedFile.name : 'Select Spatial File'}
+                <input 
+                  type="file" 
+                  hidden 
+                  accept=".shp,.shx,.dbf,.geojson,.json,.zip" 
+                  multiple
+                  onChange={handleFileSelect} 
+                />
               </Button>
               <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
-                Upload just the .shp file. Missing .shx and .dbf components will be auto-generated.
+                Upload a .zip with all files, individual .shp/.shx/.dbf files, or a .geojson/.json file
               </Typography>
             </Box>
 
             {validating && (
               <Box>
                 <Typography variant="caption" color="text.secondary">
-                  Validating shapefile...
+                  Validating spatial file...
                 </Typography>
                 <LinearProgress />
               </Box>
@@ -356,10 +386,26 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
               <Paper variant="outlined" sx={{ p: 2 }}>
                 <Stack spacing={1}>
                   <Box display="flex" justifyContent="space-between" alignItems="center">
-                    <Typography variant="subtitle2">{selectedFile.name}</Typography>
+                    <Typography variant="subtitle2">Selected Files:</Typography>
                     <IconButton size="small" onClick={handleRemoveFile}>
                       <Close fontSize="small" />
                     </IconButton>
+                  </Box>
+
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">
+                      Primary: {selectedFile.name}
+                    </Typography>
+                    {companionFiles.shx && (
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        Companion: {companionFiles.shx.name}
+                      </Typography>
+                    )}
+                    {companionFiles.dbf && (
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        Companion: {companionFiles.dbf.name}
+                      </Typography>
+                    )}
                   </Box>
 
                   {validationInfo && (
