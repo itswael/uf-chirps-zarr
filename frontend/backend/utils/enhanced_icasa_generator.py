@@ -26,6 +26,125 @@ class EnhancedIcasaGenerator:
     def __init__(self):
         """Initialize the enhanced ICASA generator"""
         pass
+
+    # Fixed-width layout for location section to keep columns aligned.
+    _SITE_COL_WIDTHS = {
+        'INSI': 6,
+        'WTHLAT': 9,
+        'WTHLONG': 10,
+        'WELEV': 10,
+        'TAV': 7,
+        'AMP': 6,
+        'REFHT': 7,
+        'WNDHT': 7,
+    }
+
+    @classmethod
+    def _format_site_header(cls) -> str:
+        w = cls._SITE_COL_WIDTHS
+        return (
+            f"@ {'INSI':<{w['INSI']}}"
+            f"{'WTHLAT':>{w['WTHLAT']}}"
+            f"{'WTHLONG':>{w['WTHLONG']}}"
+            f"{'WELEV':>{w['WELEV']}}"
+            f"{'TAV':>{w['TAV']}}"
+            f"{'AMP':>{w['AMP']}}"
+            f"{'REFHT':>{w['REFHT']}}"
+            f"{'WNDHT':>{w['WNDHT']}}"
+        )
+
+    @classmethod
+    def _format_site_row(
+        cls,
+        site_code: str,
+        lat: float,
+        lon: float,
+        elevation: float,
+        tav: float,
+        amp: float,
+        refht: float,
+        wndht: float,
+    ) -> str:
+        w = cls._SITE_COL_WIDTHS
+        return (
+            f"  {site_code:<{w['INSI']}}"
+            f"{lat:>{w['WTHLAT']}.1f}"
+            f"{lon:>{w['WTHLONG']}.1f}"
+            f"{elevation:>{w['WELEV']}.1f}"
+            f"{tav:>{w['TAV']}.1f}"
+            f"{amp:>{w['AMP']}.1f}"
+            f"{refht:>{w['REFHT']}.0f}"
+            f"{wndht:>{w['WNDHT']}.0f}"
+        )
+
+    @staticmethod
+    def _compute_tav_amp(df: pd.DataFrame) -> tuple[float, float]:
+        """
+        Compute ICASA TAV and AMP values.
+
+        Rules:
+        - If selected span is less than 30 days, return -99.0 for both TAV and AMP.
+        - TAV is mean temperature over the selected span.
+        - AMP is computed from monthly aggregates when available.
+        """
+        if df.empty or 'time' not in df.columns:
+            return -99.0, -99.0
+
+        time_index = pd.to_datetime(df['time'], errors='coerce').dropna()
+        if time_index.empty:
+            return -99.0, -99.0
+
+        span_days = int((time_index.max() - time_index.min()).days) + 1
+        if span_days < 30:
+            return -99.0, -99.0
+
+        temp_series = None
+        if 'T2M' in df.columns:
+            temp_series = pd.to_numeric(df['T2M'], errors='coerce')
+        elif 'TMAX' in df.columns and 'TMIN' in df.columns:
+            tmax = pd.to_numeric(df['TMAX'], errors='coerce')
+            tmin = pd.to_numeric(df['TMIN'], errors='coerce')
+            temp_series = (tmax + tmin) / 2.0
+
+        if temp_series is None:
+            return -99.0, -99.0
+
+        temp_series = temp_series.dropna()
+        if temp_series.empty:
+            return -99.0, -99.0
+
+        tav = float(temp_series.mean())
+
+        temp_df = pd.DataFrame({
+            'time': pd.to_datetime(df['time'], errors='coerce'),
+            'temp_mean': pd.to_numeric(temp_series.reindex(df.index), errors='coerce'),
+        }).dropna(subset=['time', 'temp_mean'])
+
+        if temp_df.empty:
+            return round(tav, 1), -99.0
+
+        month_key = temp_df['time'].dt.to_period('M')
+        monthly_mean = temp_df.groupby(month_key)['temp_mean'].mean()
+
+        amp = -99.0
+        if 'TMAX' in df.columns:
+            tmax_df = pd.DataFrame({
+                'time': pd.to_datetime(df['time'], errors='coerce'),
+                'tmax': pd.to_numeric(df['TMAX'], errors='coerce'),
+            }).dropna(subset=['time', 'tmax'])
+            if not tmax_df.empty:
+                monthly_tmax = tmax_df.groupby(tmax_df['time'].dt.to_period('M'))['tmax'].mean()
+                common_months = monthly_tmax.index.intersection(monthly_mean.index)
+                if len(common_months) > 0:
+                    # User-requested definition: AMP = 1/2 * (monthly max - monthly avg)
+                    amp_values = 0.5 * (monthly_tmax.loc[common_months] - monthly_mean.loc[common_months])
+                    amp = float(amp_values.mean())
+
+        if amp == -99.0 and len(monthly_mean) > 1:
+            # Fallback amplitude using monthly mean temperature range.
+            amp = float((monthly_mean.max() - monthly_mean.min()) / 2.0)
+
+        return round(tav, 1), (round(amp, 1) if amp != -99.0 else -99.0)
     
     def generate_icasa_content(
         self,
@@ -57,6 +176,7 @@ class EnhancedIcasaGenerator:
         
         # Get elevation for the location
         elevation = get_elevation(lat, lon)
+        tav, amp = self._compute_tav_amp(df)
         
         # Generate file content
         output = io.StringIO()
@@ -79,12 +199,10 @@ class EnhancedIcasaGenerator:
                 output.write(f"! {var_code:<6} {config['description']}\n")
         output.write("\n")
         
-        # Write location header
-        output.write("@ INSI   WTHLAT  WTHLONG   WELEV   TAV   AMP  REFHT  WNDHT\n")
+        # Write location header and row using identical fixed-width layout.
+        output.write(f"{self._format_site_header()}\n")
         output.write(
-            f"  {site_code:<4} {lat:>8.1f} {lon:>8.1f} {elevation:>7.2f} "
-            f"{nasa_power_config.TAV:>5.1f} {nasa_power_config.AMP:>5.1f} "
-            f"{nasa_power_config.REFHT:>6.0f} {nasa_power_config.WNDHT:>6.0f}\n\n"
+            f"{self._format_site_row(site_code, lat, lon, elevation, tav, amp, nasa_power_config.REFHT, nasa_power_config.WNDHT)}\n\n"
         )
         
         # Write data header

@@ -5,6 +5,7 @@ import {
   Paper,
   Box,
   Typography,
+  Link,
   ToggleButton,
   ToggleButtonGroup,
   CircularProgress,
@@ -27,7 +28,7 @@ import {
   Line,
 } from 'recharts';
 import appConfig from '@/config/app.config';
-import { generateWeatherSummary } from '@/utils/weatherSummary';
+import { generateWeatherSummaryWithSources } from '@/utils/weatherSummary';
 
 interface ChartData {
   time: string[];
@@ -117,9 +118,9 @@ export default function PrecipitationChart({
   const { name: variableName, color: variableColor } = getVariableDisplay();
   const rawValues = data ? (data.values || data.precipitation || []) : [];
 
-  const summaryText = useMemo(
+  const summaryResult = useMemo(
     () =>
-      generateWeatherSummary({
+      generateWeatherSummaryWithSources({
         selectedVariable,
         variableName,
         units: data?.units || '',
@@ -265,9 +266,27 @@ export default function PrecipitationChart({
               borderColor: 'divider',
             }}
           >
-            <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.65 }}>
-              {summaryText}
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{ lineHeight: 1.65, whiteSpace: 'pre-line' }}
+            >
+              {summaryResult.summary}
             </Typography>
+            {summaryResult.sources.length > 0 && (
+              <Box sx={{ mt: 1 }}>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                  Metric references:
+                </Typography>
+                {summaryResult.sources.map((source) => (
+                  <Typography key={source.url} variant="caption" sx={{ display: 'block' }}>
+                    <Link href={source.url} target="_blank" rel="noopener noreferrer">
+                      {source.label}
+                    </Link>
+                  </Typography>
+                ))}
+              </Box>
+            )}
           </Box>
         </>
       ) : (
