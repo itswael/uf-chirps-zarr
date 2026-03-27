@@ -55,7 +55,7 @@ export default function PrecipitationChart({
   loading,
   aggregation,
   onAggregationChange,
-  selectedVariable = 'RAIN1',
+  selectedVariable = 'RAIN',
   onVariableChange,
   availableVariables,
 }: PrecipitationChartProps) {
@@ -83,7 +83,7 @@ export default function PrecipitationChart({
     : [];
 
   // Determine if we should use bar or line chart
-  const useLineChart = selectedVariable !== 'RAIN1' && selectedVariable !== 'RAIN2' && selectedVariable !== 'RAIN';
+  const useLineChart = selectedVariable !== 'RAIN' && selectedVariable !== 'RAIN1';
   
   // Get display name and color for variable
   const getVariableDisplay = () => {
@@ -98,8 +98,8 @@ export default function PrecipitationChart({
     
     // Map variables to colors
     const colorMap: { [key: string]: string } = {
-      'RAIN1': '#2196f3',
-      'RAIN2': '#1976d2', 
+      'RAIN': '#2196f3',
+      'RAIN1': '#1976d2', 
       'TMAX': '#f44336',
       'TMIN': '#2196f3',
       'T2M': '#ff9800',

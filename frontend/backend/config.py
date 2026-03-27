@@ -72,8 +72,8 @@ class Config:
     
     # Available weather variables for plotting
     AVAILABLE_PLOT_VARIABLES: list = [
-        "RAIN1",     # CHIRPS Precipitation
-        "RAIN2",     # NASA POWER Precipitation
+        "RAIN",     # CHIRPS Precipitation
+        "RAIN1",     # NASA POWER Precipitation
         "TMAX",      # Maximum Temperature
         "TMIN",      # Minimum Temperature
         "T2M",       # Average Temperature
@@ -84,7 +84,7 @@ class Config:
     ]
     
     # Default plot variable (CHIRPS rain for backward compatibility)
-    DEFAULT_PLOT_VARIABLE: str = os.getenv("DEFAULT_PLOT_VARIABLE", "RAIN1")
+    DEFAULT_PLOT_VARIABLE: str = os.getenv("DEFAULT_PLOT_VARIABLE", "RAIN")
     
     # SSL Certificate Verification for NASA POWER S3 access
     # Set to False to disable SSL verification (not recommended for production)

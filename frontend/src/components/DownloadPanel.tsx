@@ -52,7 +52,7 @@ const MET_PARAMETER_OPTIONS = ['T2M', 'TMAX', 'TMIN', 'TDEW', 'RH2M', 'WIND', 'S
 
 function getParameterOptions(rainSource: string): string[] {
   if (rainSource === 'both') {
-    return ['RAIN1', 'RAIN2', ...MET_PARAMETER_OPTIONS];
+    return ['RAIN', 'RAIN1', ...MET_PARAMETER_OPTIONS];
   }
   return ['RAIN', ...MET_PARAMETER_OPTIONS];
 }
@@ -64,8 +64,8 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
   const [error, setError] = useState<string | null>(null);
 
   // Default rain source is CHIRPS and all parameters are preselected.
-  const [rainSource, setRainSource] = useState<string>('chirps');
-  const [selectedParameters, setSelectedParameters] = useState<string[]>(getParameterOptions('chirps'));
+  const [rainSource, setRainSource] = useState<string>('both');
+  const [selectedParameters, setSelectedParameters] = useState<string[]>(getParameterOptions('both'));
   const [parameterDialogOpen, setParameterDialogOpen] = useState(false);
 
   // Multi-point download state
@@ -298,7 +298,7 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
                 • <strong>NASA POWER Only:</strong> All data from NASA POWER (0.5° resolution)
               </Typography>
               <Typography variant="caption" display="block">
-                • <strong>Both:</strong> Includes both RAIN1 (CHIRPS) and RAIN2 (NASA POWER) in the file
+                • <strong>Both:</strong> Includes both RAIN (CHIRPS) and RAIN1 (NASA POWER) in the file
               </Typography>
             </Alert>
 
