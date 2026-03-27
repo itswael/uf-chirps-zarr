@@ -50,7 +50,7 @@ class WeatherDataMerger:
             end_date: End date (YYYY-MM-DD)
             
         Returns:
-            DataFrame with time and RAIN1 columns
+            DataFrame with time and RAIN columns
         """
         try:
             # Select spatial point first (faster), then time range
@@ -68,14 +68,14 @@ class WeatherDataMerger:
             # Convert to DataFrame
             df = data_computed.to_dataframe().reset_index()
             
-            # Rename precipitation to RAIN1 (CHIRPS rain)
-            df = df.rename(columns={'precipitation': 'RAIN1'})
+            # Rename precipitation to RAIN (CHIRPS rain)
+            df = df.rename(columns={'precipitation': 'RAIN'})
             
             # Round to 1 decimal place
-            df['RAIN1'] = df['RAIN1'].round(1)
+            df['RAIN'] = df['RAIN'].round(1)
             
-            # Keep only time and RAIN1
-            df = df[['time', 'RAIN1']]
+            # Keep only time and RAIN
+            df = df[['time', 'RAIN']]
             
             logger.info(f"Extracted CHIRPS data: {len(df)} days")
             
@@ -135,31 +135,28 @@ class WeatherDataMerger:
             
             # Handle rain data based on source selection
             if rain_source == "nasa_power":
-                # Use NASA POWER rain as RAIN (remove RAIN2, rename to RAIN)
-                if 'RAIN2' in df_nasa.columns:
-                    df_nasa = df_nasa.rename(columns={'RAIN2': 'RAIN'})
+                # Use NASA POWER rain as RAIN (remove RAIN1, rename to RAIN)
+                if 'RAIN1' in df_nasa.columns:
+                    df_nasa = df_nasa.rename(columns={'RAIN1': 'RAIN'})
                 df_merged = df_nasa
                 
             elif rain_source == "chirps":
-                # Use CHIRPS rain as RAIN (rename RAIN1 to RAIN)
-                # Add other NASA POWER variables (excluding RAIN2)
+                # Use CHIRPS rain as RAIN and add other NASA POWER variables.
                 if df_merged is not None:
-                    df_merged = df_merged.rename(columns={'RAIN1': 'RAIN'})
-                    
-                    # Drop RAIN2 from NASA data if present
-                    if 'RAIN2' in df_nasa.columns:
-                        df_nasa = df_nasa.drop(columns=['RAIN2'])
+                    # Drop RAIN1 from NASA data if present
+                    if 'RAIN1' in df_nasa.columns:
+                        df_nasa = df_nasa.drop(columns=['RAIN1'])
                     
                     # Merge with NASA POWER data
                     df_merged = pd.merge(df_merged, df_nasa, on="time", how="inner")
                 else:
                     # Fallback if CHIRPS data couldn't be fetched
-                    if 'RAIN2' in df_nasa.columns:
-                        df_nasa = df_nasa.rename(columns={'RAIN2': 'RAIN'})
+                    if 'RAIN1' in df_nasa.columns:
+                        df_nasa = df_nasa.rename(columns={'RAIN1': 'RAIN'})
                     df_merged = df_nasa
                     
             elif rain_source == "both":
-                # Keep both RAIN1 (CHIRPS) and RAIN2 (NASA POWER)
+                # Keep both RAIN (CHIRPS) and RAIN1 (NASA POWER)
                 if df_merged is not None:
                     df_merged = pd.merge(df_merged, df_nasa, on="time", how="inner")
                 else:
