@@ -40,7 +40,7 @@ export default function Home() {
   const [location, setLocation] = useState<{ lat: number; lon: number; zoom: number } | null>(null);
   const [metadata, setMetadata] = useState<any>(null);
   const [availableVariables, setAvailableVariables] = useState<any>(null);
-  const [selectedVariable, setSelectedVariable] = useState<string>('RAIN1');
+  const [selectedVariable, setSelectedVariable] = useState<string>('RAIN');
   const [startDate, setStartDate] = useState(appConfig.date.defaultStartDate);
   const [endDate, setEndDate] = useState(appConfig.date.defaultEndDate);
   const [aggregation, setAggregation] = useState(appConfig.visualization.defaultAggregation);
@@ -82,7 +82,7 @@ export default function Home() {
         if (meta.nasa_power_enabled) {
           const varsData = await apiClient.getVariables();
           setAvailableVariables(varsData.variables);
-          setSelectedVariable(varsData.default_plot_variable || 'RAIN1');
+          setSelectedVariable(varsData.default_plot_variable || 'RAIN');
         }
       } catch (err) {
         console.error('Error fetching metadata:', err);
@@ -161,7 +161,7 @@ export default function Home() {
         const std = Math.sqrt(variance);
         
         // For precipitation variables, calculate rain-specific stats
-        const isRainVariable = selectedVariable === 'RAIN1' || selectedVariable === 'RAIN2' || selectedVariable === 'RAIN';
+        const isRainVariable = selectedVariable === 'RAIN' || selectedVariable === 'RAIN1';
         const daysWithRain = isRainVariable ? numericValues.filter((v: number) => v >= 0.1).length : 0;
         const dryDays = isRainVariable ? numericValues.filter((v: number) => v < 0.1).length : 0;
         const total = isRainVariable ? numericValues.reduce((a: number, b: number) => a + b, 0) : 0;

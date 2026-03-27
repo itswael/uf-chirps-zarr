@@ -16,7 +16,7 @@ export interface WeatherSummaryResult {
   sources: WeatherSummarySource[];
 }
 
-const RAIN_VARIABLES = new Set(['RAIN1', 'RAIN2', 'RAIN']);
+const RAIN_VARIABLES = new Set(['RAIN', 'RAIN1']);
 
 const URLS = {
   rainIntensity:

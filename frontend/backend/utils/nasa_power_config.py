@@ -42,7 +42,7 @@ class NasaPowerConfig:
     RENAME_MET_VARS = {
         "T2M_MAX": "TMAX",
         "T2M_MIN": "TMIN",
-        "PRECTOTCORR": "RAIN2"  # NASA POWER rain (differentiate from CHIRPS)
+        "PRECTOTCORR": "RAIN1"  # NASA POWER rain (differentiate from CHIRPS)
     }
     
     RENAME_SOLAR_VARS = {
@@ -53,13 +53,6 @@ class NasaPowerConfig:
     # Comprehensive variable configurations for ICASA output
     ICASA_VARIABLE_CONFIGS = {
         'RAIN1': {
-            'description': 'Precipitation from CHIRPS (mm/day)',
-            'units': 'mm/day',
-            'decimal_places': 1,
-            'default_value': 0.0,
-            'source': 'CHIRPS'
-        },
-        'RAIN2': {
             'description': 'Precipitation from NASA POWER (mm/day)',
             'units': 'mm/day',
             'decimal_places': 1,
@@ -132,7 +125,6 @@ class NasaPowerConfig:
         'TMIN': 'TMIN',
         'RAIN': 'RAIN',
         'RAIN1': 'RAIN1',
-        'RAIN2': 'RAIN2',
         'SRAD': 'SRAD',
         'T2MDEW': 'TDEW',
         'WS2M': 'WIND',
@@ -162,9 +154,8 @@ class NasaPowerConfig:
 ! TMAX     Temperature at 2 Meters Maximum (°C)
 ! TDEW     Dew/Frost Point at 2 Meters (°C)
 ! RH2M     Relative Humidity at 2 Meters (%)
-! RAIN     Precipitation Corrected (mm/day)
-! RAIN1    Precipitation from CHIRPS (mm/day)
-! RAIN2    Precipitation from NASA POWER (mm/day)
+! RAIN     Precipitation (mm/day)
+! RAIN1    Precipitation from NASA POWER (mm/day)
 ! WIND     Wind Speed at 2 Meters (m/s)
 ! SRAD     All Sky Surface Shortwave Downward Irradiance (MJ/m²/day)
 
@@ -192,7 +183,7 @@ class NasaPowerConfig:
         """Get list of variables that come from CHIRPS"""
         return [
             var for var, config in cls.ICASA_VARIABLE_CONFIGS.items()
-            if config['source'] == 'CHIRPS'
+            if config['source'] in ['CHIRPS', 'HYBRID']
         ]
     
     @classmethod
