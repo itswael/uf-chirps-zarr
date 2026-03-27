@@ -757,9 +757,11 @@ async def download_icasa_multi(
         ds = open_zarr()
         merger = WeatherDataMerger(ds, power_dataset_overrides=power_dataset_overrides)
         
-        # After pre-filtering into local subsets, generation is CPU-bound; keep this path sequential.
+        # Use bounded parallelism for multi-point generation.
+        cpu_count = os.cpu_count() or 4
+        max_workers = min(8, cpu_count)
         logger.info("Generating weather data package from local dataset subsets...")
-        batch_generator = EnhancedIcasaBatchGenerator(max_workers=1)
+        batch_generator = EnhancedIcasaBatchGenerator(max_workers=max_workers)
         
         files = await batch_generator.generate_batch_from_merger(
             coordinates=valid_coords,
