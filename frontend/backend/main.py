@@ -131,6 +131,24 @@ def parse_selected_parameters(selected_parameters: Optional[str]) -> Optional[Li
     return ordered_unique
 
 
+def validate_selected_parameters_for_rain_source(
+    selected_variables: Optional[List[str]],
+    rain_source: str
+) -> None:
+    """Validate parameter choices against the selected rain source behavior."""
+    if not selected_variables:
+        return
+
+    if rain_source in ['chirps', 'nasa_power'] and 'RAIN1' in selected_variables:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "RAIN1 is only available when rain_source is 'both'. "
+                "Use RAIN for chirps or nasa_power single-source selections."
+            )
+        )
+
+
 class SpatialBounds(BaseModel):
     lon_min: float
     lon_max: float
@@ -250,8 +268,8 @@ async def get_available_variables():
         variables = {}
         
         # Add CHIRPS variable
-        variables['RAIN1'] = {
-            'code': 'RAIN1',
+        variables['RAIN'] = {
+            'code': 'RAIN',
             'description': 'Precipitation from CHIRPS',
             'units': 'mm/day',
             'source': 'CHIRPS',
@@ -261,7 +279,7 @@ async def get_available_variables():
         # Add NASA POWER variables if enabled
         if config.ENABLE_NASA_POWER:
             for var_code in config.AVAILABLE_PLOT_VARIABLES:
-                if var_code != 'RAIN1':
+                if var_code != 'RAIN':
                     var_config = nasa_power_config.get_variable_config(var_code)
                     if var_config:
                         variables[var_code] = {
@@ -350,7 +368,7 @@ async def get_timeseries_variable(
     lon: float = Query(...),
     start_date: str = Query(...),
     end_date: str = Query(...),
-    variable: str = Query(..., description="Variable code (RAIN1, TMAX, TMIN, etc.)"),
+    variable: str = Query(..., description="Variable code (RAIN, TMAX, TMIN, etc.)"),
     aggregation: Optional[str] = Query(None, description="daily, weekly, monthly, yearly")
 ):
     """Get time series for any weather variable (CHIRPS or NASA POWER)"""
@@ -399,7 +417,7 @@ async def get_timeseries_variable(
         
         # Get variable metadata
         var_config = nasa_power_config.get_variable_config(variable)
-        if variable == 'RAIN1':
+        if variable == 'RAIN':
             units = 'mm/day'
             description = 'CHIRPS Precipitation'
         elif var_config:
@@ -572,6 +590,7 @@ async def download_icasa(
         ds = open_zarr()
         merger = WeatherDataMerger(ds)
         selected_vars = parse_selected_parameters(selected_parameters)
+        validate_selected_parameters_for_rain_source(selected_vars, rain_source)
         
         # Get merged data
         df = await merger.merge_weather_data(
@@ -659,6 +678,7 @@ async def download_icasa_multi(
             )
 
         selected_vars = parse_selected_parameters(selected_parameters)
+        validate_selected_parameters_for_rain_source(selected_vars, rain_source)
         
         # Read uploaded file
         shp_content = await shapefile.read()
