@@ -28,6 +28,55 @@ class ShapefileProcessor:
     """Process shapefiles and extract coordinates"""
 
     @staticmethod
+    def _populate_nasaid_dbf_if_missing(gdf, file_path: Path) -> Optional[str]:
+        """
+        When a shapefile has no usable ID column, create one in the .dbf using NASA IDs.
+
+        Returns:
+            The created column name, or None if not created.
+        """
+        if file_path.suffix.lower() != '.shp':
+            return None
+
+        if gdf.empty:
+            return None
+
+        # Keep DBF field name <= 10 chars for ESRI Shapefile compatibility.
+        new_col = 'NASAID'
+        existing = {c.upper() for c in gdf.columns}
+        if new_col in existing:
+            return 'NASAID'
+
+        # Best-effort generation for each feature; for non-point geometries,
+        # use a representative point to derive a stable fallback NASA ID.
+        nasa_ids = []
+        for _, row in gdf.iterrows():
+            geom = row.geometry
+            if geom is None or geom.is_empty:
+                nasa_ids.append(None)
+                continue
+
+            if geom.geom_type == 'Point':
+                lon, lat = float(geom.x), float(geom.y)
+            elif geom.geom_type == 'MultiPoint' and len(geom.geoms) > 0:
+                lon, lat = float(geom.geoms[0].x), float(geom.geoms[0].y)
+            else:
+                rp = geom.representative_point()
+                lon, lat = float(rp.x), float(rp.y)
+
+            fallback_id = get_nasaid(lon=lon, lat=lat)
+            if fallback_id is None:
+                fallback_id = f"NO_NASAID_{lat:.4f}_{lon:.4f}"
+            nasa_ids.append(str(fallback_id))
+
+        gdf[new_col] = nasa_ids
+
+        # Persist back to the uploaded temp shapefile so .dbf includes NASAID.
+        gdf.to_file(str(file_path), driver='ESRI Shapefile')
+        logger.info("Created NASAID column in DBF for shapefile without IDs: %s", file_path.name)
+        return new_col
+
+    @staticmethod
     def calculate_bounds(coordinates: List[Tuple[float, float]]) -> Dict[str, float]:
         """Calculate bounding coordinates for a collection of lon/lat points."""
         if not coordinates:
@@ -86,6 +135,12 @@ class ShapefileProcessor:
                     id_column = gdf.columns[cols.index(col_name)]
                     logger.info(f"Found ID column: {id_column}")
                     break
+
+            # If no ID column is present in a shapefile, still create a NASAID
+            # column in the DBF for package completeness, but keep extraction
+            # mapping coordinate-based so polygon vertices get unique NASAIDs.
+            if id_column is None and file_path.suffix.lower() == '.shp':
+                ShapefileProcessor._populate_nasaid_dbf_if_missing(gdf, file_path)
             
             # Extract coordinates and IDs from each feature
             for feature_idx, (idx, row) in enumerate(gdf.iterrows()):
