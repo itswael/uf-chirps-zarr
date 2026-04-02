@@ -21,7 +21,8 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-GRID_RESOLUTION = 0.05
+GRID_RESOLUTION = 0.005
+DATASTORE_VERSION = "0.005"
 MIN_LAT = -90.0
 MAX_LAT = 90.0
 MIN_LON = -180.0
@@ -33,7 +34,7 @@ LEGACY_SOURCE_PATH = BASE_DIR.parent / "sample_data" / "nasaid" / "five_arc_land
 
 
 class NasaIdDatastore:
-    """Thread-safe SQLite-backed lookup for 0.05-degree NASA IDs."""
+    """Thread-safe SQLite-backed lookup for 0.005-degree NASA IDs."""
 
     def __init__(self, db_path: Path = DATASTORE_PATH):
         self.db_path = db_path
@@ -50,7 +51,7 @@ class NasaIdDatastore:
     @classmethod
     def _quantize_index(cls, value: float, minimum: float) -> int:
         value = cls._clamp(value, minimum, MAX_LAT if minimum == MIN_LAT else MAX_LON)
-        return int(round((value - minimum) / GRID_RESOLUTION))
+        return int((value - minimum) / GRID_RESOLUTION)
 
     @classmethod
     def _coord_key(cls, lon: float, lat: float) -> Tuple[int, int]:
@@ -71,6 +72,20 @@ class NasaIdDatastore:
             self._thread_local.conn = conn
         return conn
 
+    def is_compatible(self) -> bool:
+        """Check whether the on-disk datastore matches the current grid resolution."""
+        conn = self._get_connection()
+        if conn is None:
+            return False
+
+        try:
+            row = conn.execute(
+                "SELECT value FROM nasaid_metadata WHERE key = 'grid_resolution'"
+            ).fetchone()
+            return row is not None and str(row[0]) == DATASTORE_VERSION
+        except sqlite3.Error:
+            return False
+
     def lookup(self, lon: float, lat: float) -> Optional[str]:
         conn = self._get_connection()
         if conn is None:
@@ -84,20 +99,11 @@ class NasaIdDatastore:
         if row is not None:
             return str(row[0])
 
-        # Nearest-neighbor fallback: return closest available NASA ID in index space.
-        nearest_row = conn.execute(
-            """
-            SELECT nasaid
-            FROM nasaid_grid
-            ORDER BY ((lat_idx - ?) * (lat_idx - ?) + (lon_idx - ?) * (lon_idx - ?)) ASC
-            LIMIT 1
-            """,
-            (lat_idx, lat_idx, lon_idx, lon_idx),
-        ).fetchone()
-
-        if nearest_row is None:
-            return None
-        return str(nearest_row[0])
+        # No exact datastore hit: compute a deterministic 0.005-degree NASAID
+        # directly from the coordinate so adjacent cells do not collapse to a
+        # single nearest stored name.
+        lon_slots = int((MAX_LON - MIN_LON) / GRID_RESOLUTION) + 1
+        return str(lat_idx * lon_slots + lon_idx + 1)
 
 
 def _resolve_columns(gdf) -> Tuple[str, str, str]:
@@ -150,6 +156,8 @@ def build_nasaid_datastore(
 
     conn = sqlite3.connect(str(db_path))
     try:
+        conn.execute("DROP TABLE IF EXISTS nasaid_metadata")
+        conn.execute("DROP TABLE IF EXISTS nasaid_grid")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS nasaid_grid (
@@ -160,20 +168,24 @@ def build_nasaid_datastore(
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS nasaid_metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+            """
+        )
 
         def coord_key(lon: float, lat: float) -> Tuple[int, int]:
             lat_clamped = max(MIN_LAT, min(MAX_LAT, float(lat)))
             lon_clamped = max(MIN_LON, min(MAX_LON, float(lon)))
-            lat_idx = int(round((lat_clamped - MIN_LAT) / GRID_RESOLUTION))
-            lon_idx = int(round((lon_clamped - MIN_LON) / GRID_RESOLUTION))
+            lat_idx = int((lat_clamped - MIN_LAT) / GRID_RESOLUTION)
+            lon_idx = int((lon_clamped - MIN_LON) / GRID_RESOLUTION)
             return lat_idx, lon_idx
 
         rows = []
         for _, row in gdf.iterrows():
-            raw_id = row.get(id_col)
-            if raw_id is None:
-                continue
-
             if lon_col == "__geom_lon__":
                 geom = row.geometry
                 if geom is None or geom.is_empty:
@@ -185,13 +197,19 @@ def build_nasaid_datastore(
                 lat = float(row[lat_col])
 
             lat_idx, lon_idx = coord_key(lon, lat)
-            rows.append((lat_idx, lon_idx, str(int(raw_id)) if str(raw_id).replace('.', '', 1).isdigit() else str(raw_id)))
+            lon_slots = int((MAX_LON - MIN_LON) / GRID_RESOLUTION) + 1
+            generated_id = lat_idx * lon_slots + lon_idx + 1
+            rows.append((lat_idx, lon_idx, str(generated_id)))
 
         conn.executemany(
             "INSERT OR REPLACE INTO nasaid_grid (lat_idx, lon_idx, nasaid) VALUES (?, ?, ?)",
             rows,
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_nasaid_grid ON nasaid_grid(lat_idx, lon_idx)")
+        conn.execute(
+            "INSERT OR REPLACE INTO nasaid_metadata (key, value) VALUES ('grid_resolution', ?)",
+            (DATASTORE_VERSION,),
+        )
         conn.commit()
 
         logger.info("NASA ID datastore built at %s with %d records", db_path, len(rows))
@@ -206,8 +224,14 @@ _DATASTORE = NasaIdDatastore()
 
 def ensure_nasaid_datastore() -> Optional[Path]:
     """Ensure datastore exists; build it once from legacy source if available."""
-    if DATASTORE_PATH.exists():
+    if DATASTORE_PATH.exists() and _DATASTORE.is_compatible():
         return DATASTORE_PATH
+
+    if DATASTORE_PATH.exists() and not _DATASTORE.is_compatible():
+        try:
+            DATASTORE_PATH.unlink()
+        except Exception:
+            pass
 
     if LEGACY_SOURCE_PATH.exists():
         try:
@@ -221,6 +245,23 @@ def ensure_nasaid_datastore() -> Optional[Path]:
 
 
 def get_nasaid(lon: float, lat: float) -> Optional[str]:
-    """Lookup fallback NASA ID from SQLite datastore."""
+    """
+    Lookup fallback NASA ID from SQLite datastore.
+
+    If datastore lookup is unavailable, fall back to a deterministic
+    0.005-degree global grid ID so filename generation never reverts
+    to the legacy coordinate-based naming.
+    """
     ensure_nasaid_datastore()
-    return _DATASTORE.lookup(lon=lon, lat=lat)
+    nasaid = _DATASTORE.lookup(lon=lon, lat=lat)
+    if nasaid is not None:
+        return nasaid
+
+    # Deterministic backup ID in global 0.005-degree index space.
+    lat_clamped = max(MIN_LAT, min(MAX_LAT, float(lat)))
+    lon_clamped = max(MIN_LON, min(MAX_LON, float(lon)))
+    lat_idx = int((lat_clamped - MIN_LAT) / GRID_RESOLUTION)
+    lon_idx = int((lon_clamped - MIN_LON) / GRID_RESOLUTION)
+    lon_slots = int((MAX_LON - MIN_LON) / GRID_RESOLUTION) + 1
+    fallback_id = lat_idx * lon_slots + lon_idx + 1
+    return str(fallback_id)
