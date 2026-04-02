@@ -4,6 +4,7 @@ Extracts coordinates from shapefile for multi-point weather data generation
 """
 import logging
 import os
+import math
 from pathlib import Path
 from typing import List, Tuple, Dict, Any, Optional
 import tempfile
@@ -17,6 +18,8 @@ try:
     import geopandas as gpd
 except ImportError:
     gpd = None
+
+from .nasaid_lookup import get_nasaid
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +90,17 @@ class ShapefileProcessor:
             # Extract coordinates and IDs from each feature
             for feature_idx, (idx, row) in enumerate(gdf.iterrows()):
                 geom = row.geometry
-                # Use ID from column if exists, otherwise use feature index
-                point_id = str(row[id_column]) if id_column else str(feature_idx + 1)
+                # Use ID from column when available and non-empty; otherwise use NASA ID fallback per coordinate.
+                feature_id = None
+                if id_column:
+                    raw_feature_id = row[id_column]
+                    is_missing = (
+                        raw_feature_id is None
+                        or (isinstance(raw_feature_id, float) and math.isnan(raw_feature_id))
+                        or str(raw_feature_id).strip() == ''
+                    )
+                    if not is_missing:
+                        feature_id = str(raw_feature_id)
                 
                 if geom.is_empty:
                     continue
@@ -119,6 +131,15 @@ class ShapefileProcessor:
                     # Deduplicate in O(1) using rounded coordinate keys.
                     if rounded not in seen_coords:
                         seen_coords.add(rounded)
+                        point_id = feature_id
+                        if point_id is None:
+                            fallback_id = get_nasaid(lon=coord[0], lat=coord[1])
+                            if fallback_id is not None:
+                                point_id = fallback_id
+                            else:
+                                # Keep fallback deterministic and non-sequential if NASA ID is unavailable.
+                                point_id = f"NO_NASAID_{coord[1]:.4f}_{coord[0]:.4f}"
+
                         id_mapping[coord_index] = point_id
                         coordinates.append(coord)
                         coord_index += 1
