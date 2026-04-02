@@ -313,6 +313,25 @@ class EnhancedIcasaBatchGenerator:
             self.max_workers = max_workers
         
         logger.info(f"Initialized batch generator with {self.max_workers} max workers")
+
+    @staticmethod
+    def _ensure_unique_filename(filename: str, existing: Dict[str, str]) -> str:
+        """Return a non-colliding filename by appending an incrementing suffix."""
+        if filename not in existing:
+            return filename
+
+        if '.' in filename:
+            stem, ext = filename.rsplit('.', 1)
+            ext = f".{ext}"
+        else:
+            stem, ext = filename, ''
+
+        counter = 2
+        candidate = f"{stem}_{counter}{ext}"
+        while candidate in existing:
+            counter += 1
+            candidate = f"{stem}_{counter}{ext}"
+        return candidate
     
     async def generate_batch_from_merger(
         self,
@@ -389,7 +408,14 @@ class EnhancedIcasaBatchGenerator:
                 logger.error(f"Task failed with exception: {result}")
             elif result is not None:
                 filename, content = result
-                results[filename] = content
+                unique_filename = self._ensure_unique_filename(filename, results)
+                if unique_filename != filename:
+                    logger.debug(
+                        "Filename collision for %s; stored as %s",
+                        filename,
+                        unique_filename,
+                    )
+                results[unique_filename] = content
                 successful += 1
             else:
                 failed += 1
