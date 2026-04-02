@@ -225,18 +225,22 @@ class ZipFileBuilder:
                         shapefile_path,
                         arcname=f"shapefile/{shapefile_path.name}"
                     )
-                    
-                    # Add companion files (.shx, .dbf, .prj, etc.)
-                    base_path = shapefile_path.with_suffix('')
-                    companion_extensions = ['.shx', '.dbf', '.prj', '.cpg', '.qpj']
-                    
-                    for ext in companion_extensions:
-                        companion_file = base_path.with_suffix(ext)
-                        if companion_file.exists():
-                            zip_file.write(
-                                companion_file,
-                                arcname=f"shapefile/{companion_file.name}"
-                            )
+
+                    # Add companion files with case-insensitive discovery so generated DBF
+                    # (including NASAID-populated DBF) is always packaged.
+                    if shapefile_path.suffix.lower() == '.shp':
+                        base_name = shapefile_path.stem
+                        companion_exts = {'.shx', '.dbf', '.prj', '.cpg', '.qpj', '.sbn', '.sbx'}
+                        seen = set()
+
+                        for candidate in shapefile_path.parent.glob(f"{base_name}.*"):
+                            ext = candidate.suffix.lower()
+                            if ext in companion_exts and candidate.name.lower() not in seen:
+                                seen.add(candidate.name.lower())
+                                zip_file.write(
+                                    candidate,
+                                    arcname=f"shapefile/{candidate.name}"
+                                )
             
             # Add README if requested
             if include_readme:
