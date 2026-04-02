@@ -17,6 +17,22 @@ class ApiClient {
     });
   }
 
+  private getDownloadFilename(response: any, fallbackName: string): string {
+    const headerValue = response?.headers?.['content-disposition'];
+    if (typeof headerValue === 'string') {
+      const filenameMatch = /filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i.exec(headerValue);
+      const encodedName = filenameMatch?.[1] || filenameMatch?.[2];
+      if (encodedName) {
+        try {
+          return decodeURIComponent(encodedName);
+        } catch {
+          return encodedName;
+        }
+      }
+    }
+    return fallbackName;
+  }
+
   /**
    * Get metadata about the Zarr store
    */
@@ -139,14 +155,16 @@ class ApiClient {
       responseType: 'blob',
     });
     
+    const filename = this.getDownloadFilename(
+      response,
+      `weather_${params.lat}_${params.lon}_${params.start_date}_${params.end_date}.WTH`
+    );
+
     // Create download link
     const url = window.URL.createObjectURL(new Blob([response.data]));
     const link = document.createElement('a');
     link.href = url;
-    link.setAttribute(
-      'download',
-      `weather_${params.lat}_${params.lon}_${params.start_date}_${params.end_date}.WTH`
-    );
+    link.setAttribute('download', filename);
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -209,14 +227,16 @@ class ApiClient {
       timeout: 300000, // 5 minutes for large files
     });
     
+    const filename = this.getDownloadFilename(
+      response,
+      `weather_data_${params.start_date}_${params.end_date}.zip`
+    );
+
     // Create download link
     const url = window.URL.createObjectURL(new Blob([response.data]));
     const link = document.createElement('a');
     link.href = url;
-    link.setAttribute(
-      'download',
-      `weather_data_${params.start_date}_${params.end_date}.zip`
-    );
+    link.setAttribute('download', filename);
     document.body.appendChild(link);
     link.click();
     link.remove();
