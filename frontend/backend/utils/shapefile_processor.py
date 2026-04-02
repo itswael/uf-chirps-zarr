@@ -67,6 +67,7 @@ class ShapefileProcessor:
             coordinates = []
             id_mapping = {}  # Maps index to point ID
             coord_index = 0
+            seen_coords = set()
             
             # Look for ID column - check common naming conventions
             id_column = None
@@ -115,16 +116,9 @@ class ShapefileProcessor:
                 # Add extracted coordinates with their ID mapping
                 for coord in feature_coords:
                     rounded = (round(coord[0], 4), round(coord[1], 4))
-                    # Check if this coordinate was already added (deduplicate)
-                    is_duplicate = False
-                    for existing_idx in range(len(coordinates)):
-                        if existing_idx < len(coordinates):
-                            existing_coord = coordinates[existing_idx]
-                            if (round(existing_coord[0], 4), round(existing_coord[1], 4)) == rounded:
-                                is_duplicate = True
-                                break
-                    
-                    if not is_duplicate:
+                    # Deduplicate in O(1) using rounded coordinate keys.
+                    if rounded not in seen_coords:
+                        seen_coords.add(rounded)
                         id_mapping[coord_index] = point_id
                         coordinates.append(coord)
                         coord_index += 1

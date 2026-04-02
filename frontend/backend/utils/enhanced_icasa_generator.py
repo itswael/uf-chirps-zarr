@@ -13,6 +13,7 @@ import numpy as np
 
 from .nasa_power_config import nasa_power_config
 from .elevation_provider import get_elevation
+from .elevation_provider import get_elevation_provider
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +155,7 @@ class EnhancedIcasaGenerator:
         site_code: str = "UFLC",
         source_description: str = "CHIRPS + NASA POWER",
         selected_variables: Optional[List[str]] = None,
+        elevation: Optional[float] = None,
     ) -> str:
         """
         Generate ICASA format weather file content from a DataFrame.
@@ -174,8 +176,9 @@ class EnhancedIcasaGenerator:
         if 'time' not in df.columns:
             raise ValueError("DataFrame must have a 'time' column")
         
-        # Get elevation for the location
-        elevation = get_elevation(lat, lon)
+        # Get elevation for the location (or use precomputed value for batch runs)
+        if elevation is None:
+            elevation = get_elevation(lat, lon)
         tav, amp = self._compute_tav_amp(df)
         
         # Generate file content
@@ -343,6 +346,12 @@ class EnhancedIcasaBatchGenerator:
         
         # Create semaphore to limit concurrent operations
         semaphore = asyncio.Semaphore(self.max_workers)
+
+        # Pre-compute elevations in one vectorized batch to reduce interpolation overhead.
+        elevation_provider = get_elevation_provider()
+        elevation_values = elevation_provider.get_elevations_batch(
+            [(lat, lon) for lon, lat in coordinates]
+        )
         
         # Create tasks for all coordinates
         tasks = []
@@ -355,6 +364,7 @@ class EnhancedIcasaBatchGenerator:
                 point_id=point_id,
                 lon=lon,
                 lat=lat,
+                elevation=elevation_values[i],
                 start_date=start_date,
                 end_date=end_date,
                 merger=merger,
@@ -397,6 +407,7 @@ class EnhancedIcasaBatchGenerator:
         point_id: Optional[str],
         lon: float,
         lat: float,
+        elevation: float,
         start_date: str,
         end_date: str,
         merger,
@@ -442,6 +453,7 @@ class EnhancedIcasaBatchGenerator:
                     site_code=site_code,
                     source_description=source_desc,
                     selected_variables=selected_variables,
+                    elevation=elevation,
                 )
                 
                 # Log progress for point-based IDs

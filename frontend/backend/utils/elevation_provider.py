@@ -37,6 +37,7 @@ class ElevationProvider:
         self._lats: Optional[np.ndarray] = None
         self._lons: Optional[np.ndarray] = None
         self._elevation_data: Optional[np.ndarray] = None
+        self._npz_cache_path = self.elevation_file_path.with_suffix('.npz')
         
         # Cache for previously fetched elevations
         # Key: (rounded_lat, rounded_lon), Value: elevation
@@ -57,19 +58,50 @@ class ElevationProvider:
                     f"Will use default elevation value."
                 )
                 return
-            
-            # Load dataset
-            self._dataset = xr.open_dataset(self.elevation_file_path)
-            
-            # Extract WELEV data and coordinates into numpy arrays for fast access
-            if 'WELEV' in self._dataset:
-                welev_data = self._dataset['WELEV']
-                
-                # Get coordinate arrays
-                self._lats = welev_data.coords['y'].values
-                self._lons = welev_data.coords['x'].values
-                self._elevation_data = welev_data.values
-                
+
+            loaded_from_npz = False
+            if self._npz_cache_path.exists() and self._npz_cache_path.stat().st_mtime >= self.elevation_file_path.stat().st_mtime:
+                try:
+                    cached = np.load(self._npz_cache_path)
+                    self._lats = cached['lats']
+                    self._lons = cached['lons']
+                    self._elevation_data = cached['elev']
+                    loaded_from_npz = True
+                    logger.info(f"Loaded elevation arrays from cache: {self._npz_cache_path}")
+                except Exception as cache_err:
+                    logger.warning(f"Failed to load elevation cache {self._npz_cache_path}: {cache_err}")
+
+            if not loaded_from_npz:
+                # Load dataset and extract numpy arrays.
+                self._dataset = xr.open_dataset(self.elevation_file_path)
+
+                if 'WELEV' in self._dataset:
+                    welev_data = self._dataset['WELEV']
+                    self._lats = welev_data.coords['y'].values
+                    self._lons = welev_data.coords['x'].values
+                    self._elevation_data = welev_data.values
+
+                    # Persist sidecar cache for faster cold start on next run.
+                    try:
+                        np.savez_compressed(
+                            self._npz_cache_path,
+                            lats=self._lats,
+                            lons=self._lons,
+                            elev=self._elevation_data,
+                        )
+                        logger.info(f"Wrote elevation cache: {self._npz_cache_path}")
+                    except Exception as cache_write_err:
+                        logger.warning(f"Could not write elevation cache: {cache_write_err}")
+
+            if self._elevation_data is not None and self._lats is not None and self._lons is not None:
+                # Sanitize invalid DEM values. Values below -430 m are outside realistic land elevations.
+                invalid_mask = (~np.isfinite(self._elevation_data)) | (self._elevation_data < -430.0) | (self._elevation_data > 9000.0)
+                invalid_count = int(np.count_nonzero(invalid_mask))
+                if invalid_count:
+                    self._elevation_data = self._elevation_data.astype(np.float32, copy=True)
+                    self._elevation_data[invalid_mask] = np.nan
+                    logger.warning(f"Sanitized {invalid_count} invalid elevation cells in WELEV grid")
+
                 # Create scipy interpolator (much faster than xarray.interp)
                 self._interpolator = RegularGridInterpolator(
                     (self._lats, self._lons),
@@ -78,7 +110,7 @@ class ElevationProvider:
                     bounds_error=False,
                     fill_value=nasa_power_config.DEFAULT_ELEVATION
                 )
-                
+
                 logger.info(
                     f"Elevation dataset loaded with fast interpolator: "
                     f"{self.elevation_file_path} "
@@ -129,6 +161,8 @@ class ElevationProvider:
             try:
                 # Use fast scipy interpolator
                 elevation = float(self._interpolator((lat, lon)))
+                if not np.isfinite(elevation):
+                    elevation = nasa_power_config.DEFAULT_ELEVATION
                 elevation = round(elevation, 2)
                 
             except Exception as e:
@@ -192,7 +226,7 @@ class ElevationProvider:
                 
                 # Fill in results and update cache
                 for idx, elev, (lat, lon) in zip(uncached_indices, uncached_elevations, uncached_coords):
-                    elev_float = float(elev)
+                    elev_float = float(elev) if np.isfinite(elev) else nasa_power_config.DEFAULT_ELEVATION
                     elevations[idx] = elev_float
                     cache_key = self._round_coords(lat, lon)
                     self._cache[cache_key] = elev_float
