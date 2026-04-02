@@ -33,6 +33,7 @@ from utils.nasa_power_fetcher import get_fetcher
 from utils.weather_data_merger import WeatherDataMerger
 from utils.enhanced_icasa_generator import EnhancedIcasaGenerator, EnhancedIcasaBatchGenerator
 from utils.nasa_power_config import nasa_power_config
+from utils.nasaid_lookup import get_nasaid
 
 # Configure logging
 logging.basicConfig(
@@ -621,12 +622,14 @@ async def download_icasa(
             selected_variables=selected_vars,
         )
         
-        # Create filename
+        # Create filename (NASA ID fallback for consistency with multi-point behavior)
+        point_id = get_nasaid(lon=lon, lat=lat)
         filename = generator.create_filename(
             lat=lat,
             lon=lon,
             start_date=start_date,
-            end_date=end_date
+            end_date=end_date,
+            point_id=point_id,
         )
         
         return StreamingResponse(
