@@ -84,9 +84,9 @@ class EnhancedIcasaGenerator:
         Compute ICASA TAV and AMP values.
 
         Rules:
-        - If selected span is less than 30 days, return -99.0 for both TAV and AMP.
-        - TAV is mean temperature over the selected span.
-        - AMP is computed from monthly aggregates when available.
+        - If selected span is less than 1 year, return -99.0 for both TAV and AMP.
+        - TAV = average temperature over the selected multi-year span.
+        - AMP = 0.5 * (max monthly average temperature - min monthly average temperature).
         """
         if df.empty or 'time' not in df.columns:
             return -99.0, -99.0
@@ -96,7 +96,7 @@ class EnhancedIcasaGenerator:
             return -99.0, -99.0
 
         span_days = int((time_index.max() - time_index.min()).days) + 1
-        if span_days < 30:
+        if span_days < 365:
             return -99.0, -99.0
 
         temp_series = None
@@ -122,28 +122,15 @@ class EnhancedIcasaGenerator:
         }).dropna(subset=['time', 'temp_mean'])
 
         if temp_df.empty:
-            return round(tav, 1), -99.0
+            return -99.0, -99.0
 
         month_key = temp_df['time'].dt.to_period('M')
         monthly_mean = temp_df.groupby(month_key)['temp_mean'].mean()
 
-        amp = -99.0
-        if 'TMAX' in df.columns:
-            tmax_df = pd.DataFrame({
-                'time': pd.to_datetime(df['time'], errors='coerce'),
-                'tmax': pd.to_numeric(df['TMAX'], errors='coerce'),
-            }).dropna(subset=['time', 'tmax'])
-            if not tmax_df.empty:
-                monthly_tmax = tmax_df.groupby(tmax_df['time'].dt.to_period('M'))['tmax'].mean()
-                common_months = monthly_tmax.index.intersection(monthly_mean.index)
-                if len(common_months) > 0:
-                    # User-requested definition: AMP = 1/2 * (monthly max - monthly avg)
-                    amp_values = 0.5 * (monthly_tmax.loc[common_months] - monthly_mean.loc[common_months])
-                    amp = float(amp_values.mean())
+        if len(monthly_mean) == 0:
+            return -99.0, -99.0
 
-        if amp == -99.0 and len(monthly_mean) > 1:
-            # Fallback amplitude using monthly mean temperature range.
-            amp = float((monthly_mean.max() - monthly_mean.min()) / 2.0)
+        amp = float((monthly_mean.max() - monthly_mean.min()) / 2.0)
 
         return round(tav, 1), (round(amp, 1) if amp != -99.0 else -99.0)
     
