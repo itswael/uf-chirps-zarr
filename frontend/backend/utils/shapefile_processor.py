@@ -6,7 +6,7 @@ import logging
 import os
 import math
 from pathlib import Path
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, Optional
 import tempfile
 import zipfile
 import shutil
