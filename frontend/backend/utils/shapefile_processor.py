@@ -6,7 +6,7 @@ import logging
 import os
 import math
 from pathlib import Path
-from typing import List, Tuple, Dict, Any, Optional
+from typing import List, Tuple, Dict, Any
 import tempfile
 import zipfile
 import shutil
@@ -19,62 +19,13 @@ try:
 except ImportError:
     gpd = None
 
-from .nasaid_lookup import get_nasaid
+from .point_id import generate_point_id
 
 logger = logging.getLogger(__name__)
 
 
 class ShapefileProcessor:
     """Process shapefiles and extract coordinates"""
-
-    @staticmethod
-    def _populate_nasaid_dbf_if_missing(gdf, file_path: Path) -> Optional[str]:
-        """
-        When a shapefile has no usable ID column, create one in the .dbf using NASA IDs.
-
-        Returns:
-            The created column name, or None if not created.
-        """
-        if file_path.suffix.lower() != '.shp':
-            return None
-
-        if gdf.empty:
-            return None
-
-        # Keep DBF field name <= 10 chars for ESRI Shapefile compatibility.
-        new_col = 'NASAID'
-        existing = {c.upper() for c in gdf.columns}
-        if new_col in existing:
-            return 'NASAID'
-
-        # Best-effort generation for each feature; for non-point geometries,
-        # use a representative point to derive a stable fallback NASA ID.
-        nasa_ids = []
-        for _, row in gdf.iterrows():
-            geom = row.geometry
-            if geom is None or geom.is_empty:
-                nasa_ids.append(None)
-                continue
-
-            if geom.geom_type == 'Point':
-                lon, lat = float(geom.x), float(geom.y)
-            elif geom.geom_type == 'MultiPoint' and len(geom.geoms) > 0:
-                lon, lat = float(geom.geoms[0].x), float(geom.geoms[0].y)
-            else:
-                rp = geom.representative_point()
-                lon, lat = float(rp.x), float(rp.y)
-
-            fallback_id = get_nasaid(lon=lon, lat=lat)
-            if fallback_id is None:
-                fallback_id = f"NO_NASAID_{lat:.4f}_{lon:.4f}"
-            nasa_ids.append(str(fallback_id))
-
-        gdf[new_col] = nasa_ids
-
-        # Persist back to the uploaded temp shapefile so .dbf includes NASAID.
-        gdf.to_file(str(file_path), driver='ESRI Shapefile')
-        logger.info("Created NASAID column in DBF for shapefile without IDs: %s", file_path.name)
-        return new_col
 
     @staticmethod
     def calculate_bounds(coordinates: List[Tuple[float, float]]) -> Dict[str, float]:
@@ -95,7 +46,7 @@ class ShapefileProcessor:
     @staticmethod
     def extract_coordinates_and_ids_from_file(
         file_path: Path
-    ) -> Tuple[List[Tuple[float, float]], Dict[int, str]]:
+    ) -> Tuple[List[Tuple[float, float]], Dict[int, str], Dict[str, Any]]:
         """
         Extract coordinates and point IDs from a spatial file (shapefile or geojson).
         Supports shapefile (.shp), GeoJSON (.geojson, .json) and other formats supported by geopandas.
@@ -104,9 +55,10 @@ class ShapefileProcessor:
             file_path: Path to the shapefile (.shp) or geojson (.geojson, .json) file
             
         Returns:
-            Tuple of (coordinates_list, id_mapping)
+            Tuple of (coordinates_list, id_mapping, extraction_metadata)
             - coordinates_list: List of (longitude, latitude) tuples
             - id_mapping: Dict mapping index to point ID
+            - extraction_metadata: Dict with source and generated-id details
         """
         if gpd is None:
             raise ImportError("geopandas is required. Install with: pip install geopandas shapely")
@@ -118,6 +70,8 @@ class ShapefileProcessor:
             
             coordinates = []
             id_mapping = {}  # Maps index to point ID
+            generated_id_indices = []
+            used_ids = set()
             coord_index = 0
             seen_coords = set()
             
@@ -136,16 +90,10 @@ class ShapefileProcessor:
                     logger.info(f"Found ID column: {id_column}")
                     break
 
-            # If no ID column is present in a shapefile, still create a NASAID
-            # column in the DBF for package completeness, but keep extraction
-            # mapping coordinate-based so polygon vertices get unique NASAIDs.
-            if id_column is None and file_path.suffix.lower() == '.shp':
-                ShapefileProcessor._populate_nasaid_dbf_if_missing(gdf, file_path)
-            
             # Extract coordinates and IDs from each feature
-            for feature_idx, (idx, row) in enumerate(gdf.iterrows()):
+            for _, row in gdf.iterrows():
                 geom = row.geometry
-                # Use ID from column when available and non-empty; otherwise use NASA ID fallback per coordinate.
+                # Use ID from column when available and non-empty; otherwise use hash fallback per coordinate.
                 feature_id = None
                 if id_column:
                     raw_feature_id = row[id_column]
@@ -188,19 +136,27 @@ class ShapefileProcessor:
                         seen_coords.add(rounded)
                         point_id = feature_id
                         if point_id is None:
-                            fallback_id = get_nasaid(lon=coord[0], lat=coord[1])
-                            if fallback_id is not None:
-                                point_id = fallback_id
-                            else:
-                                # Keep fallback deterministic and non-sequential if NASA ID is unavailable.
-                                point_id = f"NO_NASAID_{coord[1]:.4f}_{coord[0]:.4f}"
+                            salt = 0
+                            point_id = generate_point_id(lat=coord[1], lon=coord[0], length=8, salt=salt)
+                            while point_id in used_ids:
+                                salt += 1
+                                point_id = generate_point_id(lat=coord[1], lon=coord[0], length=8, salt=salt)
+                            generated_id_indices.append(coord_index)
+
+                        used_ids.add(str(point_id))
 
                         id_mapping[coord_index] = point_id
                         coordinates.append(coord)
                         coord_index += 1
             
             logger.info(f"Extracted {len(coordinates)} coordinates with {len(set(id_mapping.values()))} unique point IDs")
-            return coordinates, id_mapping
+            extraction_metadata = {
+                "source_name": file_path.stem,
+                "id_column": id_column,
+                "generated_id_indices": generated_id_indices,
+                "has_generated_ids": len(generated_id_indices) > 0,
+            }
+            return coordinates, id_mapping, extraction_metadata
             
         except Exception as e:
             logger.error(f"Error extracting coordinates from file: {e}")
@@ -220,7 +176,7 @@ class ShapefileProcessor:
             List of (longitude, latitude) tuples
         """
         # Use the new method and return only coordinates
-        coordinates, _ = ShapefileProcessor.extract_coordinates_and_ids_from_file(shapefile_path)
+        coordinates, _, _ = ShapefileProcessor.extract_coordinates_and_ids_from_file(shapefile_path)
         return coordinates
     
     @staticmethod
