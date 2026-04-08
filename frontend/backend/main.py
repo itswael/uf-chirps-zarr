@@ -809,7 +809,7 @@ async def download_icasa_multi(
         
         additional_files = None
         if has_generated_ids:
-            geojson_name = f"{Path(filename).stem}_point_ids.geojson"
+            geojson_name = f"shapefile/{Path(filename).stem}_point_ids.geojson"
             geojson_payload = {
                 "type": "FeatureCollection",
                 "name": Path(filename).stem,
@@ -830,7 +830,7 @@ async def download_icasa_multi(
                 'data_source': source_desc,
                 'rain_source': rain_source
             },
-            shapefile_path=spatial_path,
+            shapefile_path=None if has_generated_ids else spatial_path,
             additional_files=additional_files,
         )
         
