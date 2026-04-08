@@ -24,6 +24,8 @@ A modern, interactive web application for visualizing and downloading CHIRPS (Cl
 - Export data in ICASA weather format
 - Automatic date formatting (YYYYDDD)
 - Ready for agricultural modeling
+- Single-point files use deterministic 8-character hash IDs
+- Multi-point ZIP supports shapefile/GeoJSON uploads and ID-aware filenames
 
 🎨 **Modern UI**
 - Material-UI design system
@@ -142,7 +144,12 @@ The application will be available at http://localhost:3000
 1. Select a location and date range
 2. Click the "Download ICASA Format" button
 3. The data will be downloaded as a text file in ICASA weather format
-4. File naming: `weather_{lat}_{lon}_{start_date}_{end_date}.txt`
+4. Single-point file naming: `{HASH8}.WTH`
+
+For multi-point downloads:
+- If uploaded features contain IDs (`id`, `point_id`, `pid`, `cell_id`), those IDs are used for filenames
+- If IDs are missing, deterministic hash IDs are generated from latitude/longitude
+- When fallback IDs are generated, a GeoJSON ID manifest is included under `shapefile/`
 
 **ICASA Format Details:**
 - Date format: YYYYDDD (Year + Day of Year, e.g., 2024001 for Jan 1, 2024)
@@ -190,11 +197,16 @@ map: {
 
 The backend provides the following REST API endpoints:
 
+- `POST /api/data/preload-weather-cache` - Warm NASA POWER cache for date ranges
 - `GET /api/metadata` - Get Zarr store metadata
+- `GET /api/variables` - Get available weather variables
 - `POST /api/data/timeseries` - Get precipitation time series
+- `POST /api/data/timeseries-variable` - Get time series for selected variable
 - `POST /api/data/statistics` - Get statistical summary
 - `POST /api/data/spatial` - Get spatial precipitation data
-- `POST /api/download/icasa` - Download data in ICASA format
+- `POST /api/download/icasa` - Download single-point ICASA file
+- `POST /api/download/icasa-multi` - Download multi-point ICASA ZIP from spatial upload
+- `POST /api/validate-shapefile` - Validate shapefile/GeoJSON upload before processing
 
 See API documentation at http://localhost:8000/docs when the backend is running.
 
