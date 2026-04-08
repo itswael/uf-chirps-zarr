@@ -220,6 +220,8 @@ class ZipFileBuilder:
 
             if additional_files:
                 for filename, content in additional_files.items():
+                    if filename.endswith('/'):
+                        continue
                     zip_file.writestr(filename, content)
             
             # Add shapefile if provided
