@@ -3,11 +3,12 @@ FastAPI Backend for CHIRPS Precipitation Data Visualization
 Provides API endpoints for the Next.js frontend
 Now includes NASA POWER meteorological data integration
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
 import os
 import logging
+from logging.handlers import TimedRotatingFileHandler
 import tempfile
 import shutil
 import json
@@ -36,12 +37,56 @@ from utils.enhanced_icasa_generator import EnhancedIcasaGenerator, EnhancedIcasa
 from utils.nasa_power_config import nasa_power_config
 from utils.point_id import generate_point_id
 
-# Configure logging
-logging.basicConfig(
-    level=getattr(logging, config.LOG_LEVEL),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+def _cleanup_old_backend_logs(log_dir: Path, retention_days: int = 90) -> None:
+    """Delete backend log files older than retention_days."""
+    cutoff = datetime.now() - timedelta(days=retention_days)
+    for log_file in log_dir.glob("backend_api.log*"):
+        try:
+            if log_file.is_file() and datetime.fromtimestamp(log_file.stat().st_mtime) < cutoff:
+                log_file.unlink()
+        except OSError:
+            # Best-effort cleanup only.
+            pass
+
+
+def configure_backend_logging() -> logging.Logger:
+    """Configure console + weekly rotating file logs under backend/logs/."""
+    backend_dir = Path(__file__).resolve().parent
+    log_dir = backend_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    _cleanup_old_backend_logs(log_dir=log_dir, retention_days=90)
+
+    log_level = getattr(logging, config.LOG_LEVEL, logging.INFO)
+    log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    formatter = logging.Formatter(log_format)
+
+    # Rotate weekly and keep roughly the last 3 months (13 weeks).
+    file_handler = TimedRotatingFileHandler(
+        filename=str(log_dir / "backend_api.log"),
+        when="W0",
+        interval=1,
+        backupCount=13,
+        encoding="utf-8",
+    )
+    file_handler.suffix = "%Y-%m-%d"
+    file_handler.setLevel(log_level)
+    file_handler.setFormatter(formatter)
+
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(formatter)
+
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.setLevel(log_level)
+    root_logger.addHandler(console_handler)
+    root_logger.addHandler(file_handler)
+
+    return logging.getLogger(__name__)
+
+
+logger = configure_backend_logging()
 
 # Zarr data path - use configuration
 ZARR_PATH = config.ZARR_PATH
