@@ -10,6 +10,7 @@ import os
 import logging
 import tempfile
 import shutil
+import json
 
 import numpy as np
 import pandas as pd
@@ -33,7 +34,7 @@ from utils.nasa_power_fetcher import get_fetcher
 from utils.weather_data_merger import WeatherDataMerger
 from utils.enhanced_icasa_generator import EnhancedIcasaGenerator, EnhancedIcasaBatchGenerator
 from utils.nasa_power_config import nasa_power_config
-from utils.nasaid_lookup import get_nasaid
+from utils.point_id import generate_point_id
 
 # Configure logging
 logging.basicConfig(
@@ -623,8 +624,8 @@ async def download_icasa(
             selected_variables=selected_vars,
         )
         
-        # Create filename (NASA ID fallback for consistency with multi-point behavior)
-        point_id = get_nasaid(lon=lon, lat=lat)
+        # Single-point files always use deterministic hash IDs.
+        point_id = generate_point_id(lat=lat, lon=lon, length=8)
         filename = generator.create_filename(
             lat=lat,
             lon=lon,
@@ -708,7 +709,7 @@ async def download_icasa_multi(
         
         # Extract coordinates and point IDs from file
         logger.info(f"Extracting coordinates and point IDs from: {filename}")
-        coordinates, point_ids_mapping = ShapefileProcessor.extract_coordinates_and_ids_from_file(spatial_path)
+        coordinates, point_ids_mapping, extraction_metadata = ShapefileProcessor.extract_coordinates_and_ids_from_file(spatial_path)
         
         # Validate coordinates with IDs
         validation = ShapefileProcessor.validate_coordinates_with_ids(
@@ -727,12 +728,31 @@ async def download_icasa_multi(
         logger.info(f"Processing {len(coordinates)} coordinates with {len(set(point_ids_mapping.values()))} unique point IDs")
         
         # Filter to valid coordinates only (keeping track of valid indices)
+        generated_id_indices = set(extraction_metadata.get('generated_id_indices', []))
         valid_indices = []
         valid_coords = []
+        has_generated_ids = False
+        point_id_features = []
         for idx, (lon, lat) in enumerate(coordinates):
             if -90 <= lat <= 90 and -180 <= lon <= 180:
                 valid_indices.append(idx)
                 valid_coords.append((lon, lat))
+
+                point_id = str(point_ids_mapping[idx])
+                generated_for_point = idx in generated_id_indices
+                has_generated_ids = has_generated_ids or generated_for_point
+                point_id_features.append({
+                    "type": "Feature",
+                    "properties": {
+                        "ID": point_id,
+                        "Latitude": float(lat),
+                        "Longitude": float(lon),
+                    },
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [round(float(lon), 7), round(float(lat), 7)],
+                    },
+                })
         
         if len(valid_coords) == 0:
             raise HTTPException(
@@ -787,6 +807,19 @@ async def download_icasa_multi(
         elif rain_source == "nasa_power":
             source_desc = "NASA POWER"
         
+        additional_files = None
+        if has_generated_ids:
+            geojson_name = f"{Path(filename).stem}_point_ids.geojson"
+            geojson_payload = {
+                "type": "FeatureCollection",
+                "name": Path(filename).stem,
+                "createdBy": "UFWeatherTool",
+                "features": point_id_features,
+            }
+            additional_files = {
+                geojson_name: json.dumps(geojson_payload, ensure_ascii=True, indent=2)
+            }
+
         zip_content = ZipFileBuilder.create_zip_archive(
             files=files,
             include_readme=True,
@@ -797,7 +830,8 @@ async def download_icasa_multi(
                 'data_source': source_desc,
                 'rain_source': rain_source
             },
-            shapefile_path=spatial_path
+            shapefile_path=spatial_path,
+            additional_files=additional_files,
         )
         
         logger.info(f"Successfully generated package with {len(files)} files")
@@ -866,7 +900,7 @@ async def validate_shapefile(
         temp_dir = spatial_path.parent
         
         # Extract coordinates
-        coordinates, point_ids_mapping = ShapefileProcessor.extract_coordinates_and_ids_from_file(spatial_path)
+        coordinates, point_ids_mapping, _ = ShapefileProcessor.extract_coordinates_and_ids_from_file(spatial_path)
         
         # Validate coordinates
         validation = ShapefileProcessor.validate_coordinates(

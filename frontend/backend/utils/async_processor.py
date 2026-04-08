@@ -192,7 +192,8 @@ class ZipFileBuilder:
         archive_name: str = "weather_data.zip",
         include_readme: bool = True,
         metadata: Optional[Dict] = None,
-        shapefile_path: Optional[str] = None
+        shapefile_path: Optional[str] = None,
+        additional_files: Optional[Dict[str, str]] = None,
     ) -> bytes:
         """
         Create a zip archive from ICASA files.
@@ -203,6 +204,7 @@ class ZipFileBuilder:
             include_readme: Include a README file with metadata
             metadata: Optional metadata to include in README
             shapefile_path: Optional path to shapefile to include in archive
+            additional_files: Optional text files to include in archive
             
         Returns:
             Zip file content as bytes
@@ -215,6 +217,10 @@ class ZipFileBuilder:
             # Add each ICASA file
             for filename, content in files.items():
                 zip_file.writestr(filename, content)
+
+            if additional_files:
+                for filename, content in additional_files.items():
+                    zip_file.writestr(filename, content)
             
             # Add shapefile if provided
             if shapefile_path:
