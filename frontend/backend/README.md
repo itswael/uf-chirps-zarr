@@ -1,15 +1,17 @@
-# CHIRPS Precipitation API
+# CHIRPS + NASA POWER Weather API
 
-FastAPI backend for serving CHIRPS precipitation data from Zarr storage.
+FastAPI backend for serving CHIRPS precipitation and NASA POWER meteorological data from Zarr storage.
 
 ## Overview
 
-This backend provides RESTful API endpoints for accessing and analyzing CHIRPS precipitation data stored in Zarr format. It handles:
+This backend provides RESTful API endpoints for accessing and analyzing weather data. It handles:
 
 - Spatial and temporal subsetting
 - Data aggregation (daily, weekly, monthly, yearly)
 - Statistical calculations
-- ICASA format exports
+- Single-point and multi-point ICASA exports
+- Spatial upload validation (shapefile, GeoJSON, zip)
+- NASA POWER integration and cache warming
 
 ## Installation
 
@@ -46,6 +48,12 @@ Get metadata about the Zarr store including:
 - Available variables
 - Dimensions
 
+### GET /api/variables
+Get all weather variables available for plotting and export.
+
+### POST /api/data/preload-weather-cache
+Warm NASA POWER cache for a date range.
+
 ### POST /api/data/timeseries
 Get precipitation time series for a location/region
 
@@ -76,6 +84,9 @@ Get precipitation time series for a location/region
 }
 ```
 
+### POST /api/data/timeseries-variable
+Get time series for a specific variable (RAIN, TMAX, TMIN, T2M, SRAD, WIND, TDEW, RH2M, etc.).
+
 ### POST /api/data/statistics
 Get statistical summary for a location and date range
 
@@ -98,14 +109,26 @@ Get statistical summary for a location and date range
 **Response:**
 ```json
 {
-  "total_precipitation": 1234.5,
-  "mean_daily": 3.38,
-  "median_daily": 2.1,
-  "max_daily": 45.6,
-  "min_daily": 0.0,
-  "std_daily": 4.2,
-  "days_with_rain": 180,
-  "dry_days": 185
+  "all_days": {
+    "total_precipitation": 1234.5,
+    "mean_daily": 3.38,
+    "median_daily": 2.1,
+    "max_daily": 45.6,
+    "min_daily": 0.0,
+    "std_daily": 4.2,
+    "days_with_rain": 180,
+    "dry_days": 185
+  },
+  "wet_days": {
+    "total_precipitation": 1234.5,
+    "mean_daily": 6.86,
+    "median_daily": 5.8,
+    "max_daily": 45.6,
+    "min_daily": 0.1,
+    "std_daily": 4.8,
+    "days_with_rain": 180,
+    "dry_days": 0
+  }
 }
 ```
 
@@ -128,22 +151,22 @@ Download data in ICASA weather format
 - `start_date`: Start date (YYYY-MM-DD)
 - `end_date`: End date (YYYY-MM-DD)
 
-**Returns:** Text file download
+**Returns:** Single `.WTH` file download (filename uses deterministic 8-character point hash).
+
+### POST /api/download/icasa-multi
+Download ICASA weather files for multiple points from uploaded shapefile/GeoJSON/zip.
+
+Behavior:
+- Uses uploaded point IDs when available (`id`, `point_id`, `pid`, `cell_id`)
+- Generates deterministic 8-character hash IDs only when IDs are missing
+- Includes generated ID manifest as GeoJSON under `shapefile/` when fallback IDs are used
+
+### POST /api/validate-shapefile
+Validate uploaded spatial files and preview coordinate counts before processing.
 
 ## CORS Configuration
 
-CORS is enabled for:
-- http://localhost:3000
-- http://localhost:3001
-
-To add more origins, edit `main.py`:
-```python
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://your-domain.com"],
-    ...
-)
-```
+CORS origins are configured in `config.py` (`Config.CORS_ORIGINS`).
 
 ## Error Handling
 
@@ -164,16 +187,21 @@ Error responses include a `detail` field with the error message.
 
 ## Environment Variables
 
-None required for basic operation. The Zarr path is configured in the client configuration.
+Key environment variables (see `config.py` for full list):
+
+- `ENABLE_NASA_POWER` (default: `true`)
+- `DEFAULT_RAIN_SOURCE` (`chirps`, `nasa_power`, `both`)
+- `MAX_SHAPEFILE_POINTS` (default: `1000`)
+- `BATCH_SIZE` (default: `50`)
+- `MAX_WORKERS` (optional)
+- `LOG_LEVEL` (default: `INFO`)
+- `NASA_POWER_VERIFY_SSL` (default: `true`)
+- `NASA_POWER_SSL_CERT_PATH` (optional)
+- `DEFAULT_SITE_CODE` (default: `UFLC`)
 
 ## Dependencies
 
-- fastapi: Web framework
-- uvicorn: ASGI server
-- xarray: N-dimensional array operations
-- zarr: Chunked array storage
-- numpy: Numerical computing
-- pydantic: Data validation
+Install from `requirements.txt` in this directory.
 
 ## Development
 
