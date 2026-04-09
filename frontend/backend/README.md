@@ -39,25 +39,30 @@ Once running, visit:
 ## Endpoints
 
 ### GET /
-Health check endpoint
+Health check endpoint.
 
 ### GET /api/metadata
-Get metadata about the Zarr store including:
-- Time range (start, end, total days)
-- Spatial extent (lat/lon bounds and resolution)
+Returns metadata about the Zarr store, including:
+- Time range and total days
+- Spatial extent and resolution
 - Available variables
-- Dimensions
+- Dataset dimensions
+- NASA POWER metadata when enabled
 
 ### GET /api/variables
-Get all weather variables available for plotting and export.
+Returns the variables available for plotting and export.
 
 ### POST /api/data/preload-weather-cache
-Warm NASA POWER cache for a date range.
+Warms the NASA POWER cache for a date range.
+
+**Query parameters:**
+- `start_date`: Start date in `YYYY-MM-DD` format
+- `end_date`: End date in `YYYY-MM-DD` format
 
 ### POST /api/data/timeseries
-Get precipitation time series for a location/region
+Returns CHIRPS precipitation time series for a location or region.
 
-**Request Body:**
+**Request body:**
 ```json
 {
   "bounds": {
@@ -70,27 +75,25 @@ Get precipitation time series for a location/region
     "start_date": "2024-01-01",
     "end_date": "2024-12-31"
   },
-  "aggregation": "monthly"
-}
-```
-
-**Response:**
-```json
-{
-  "time": ["2024-01-01", "2024-02-01", ...],
-  "precipitation": [45.2, 68.3, ...],
-  "units": "mm",
   "aggregation": "monthly"
 }
 ```
 
 ### POST /api/data/timeseries-variable
-Get time series for a specific variable (RAIN, TMAX, TMIN, T2M, SRAD, WIND, TDEW, RH2M, etc.).
+Returns a time series for a specific variable such as `RAIN`, `TMAX`, `TMIN`, `T2M`, `SRAD`, `WIND`, `TDEW`, or `RH2M`.
+
+**Query parameters:**
+- `lat`: Latitude
+- `lon`: Longitude
+- `start_date`: Start date in `YYYY-MM-DD` format
+- `end_date`: End date in `YYYY-MM-DD` format
+- `variable`: Variable code
+- `aggregation`: Optional `daily`, `weekly`, `monthly`, or `yearly`
 
 ### POST /api/data/statistics
-Get statistical summary for a location and date range
+Returns statistical summaries for a location and date range.
 
-**Request Body:**
+**Request body:**
 ```json
 {
   "bounds": {
@@ -106,63 +109,54 @@ Get statistical summary for a location and date range
 }
 ```
 
-**Response:**
-```json
-{
-  "all_days": {
-    "total_precipitation": 1234.5,
-    "mean_daily": 3.38,
-    "median_daily": 2.1,
-    "max_daily": 45.6,
-    "min_daily": 0.0,
-    "std_daily": 4.2,
-    "days_with_rain": 180,
-    "dry_days": 185
-  },
-  "wet_days": {
-    "total_precipitation": 1234.5,
-    "mean_daily": 6.86,
-    "median_daily": 5.8,
-    "max_daily": 45.6,
-    "min_daily": 0.1,
-    "std_daily": 4.8,
-    "days_with_rain": 180,
-    "dry_days": 0
-  }
-}
-```
-
 ### POST /api/data/spatial
-Get spatial precipitation data around a point
+Returns spatial precipitation data around a point.
 
-**Query Parameters:**
+**Query parameters:**
 - `lat`: Latitude
 - `lon`: Longitude
-- `start_date`: Start date (YYYY-MM-DD)
-- `end_date`: End date (YYYY-MM-DD)
-- `resolution`: Spatial extent in degrees (optional)
+- `start_date`: Start date in `YYYY-MM-DD` format
+- `end_date`: End date in `YYYY-MM-DD` format
+- `resolution`: Optional spatial extent in degrees
 
 ### POST /api/download/icasa
-Download data in ICASA weather format
+Downloads a single-point ICASA weather file.
 
-**Query Parameters:**
+**Query parameters:**
 - `lat`: Latitude
 - `lon`: Longitude
-- `start_date`: Start date (YYYY-MM-DD)
-- `end_date`: End date (YYYY-MM-DD)
+- `start_date`: Start date in `YYYY-MM-DD` format
+- `end_date`: End date in `YYYY-MM-DD` format
+- `rain_source`: `chirps`, `nasa_power`, or `both`
+- `selected_parameters`: Optional comma-separated ICASA variables
 
-**Returns:** Single `.WTH` file download (filename uses deterministic 8-character point hash).
+**Output:**
+- A single `.WTH` file download with a deterministic 8-character point ID in the filename
 
 ### POST /api/download/icasa-multi
-Download ICASA weather files for multiple points from uploaded shapefile/GeoJSON/zip.
+Downloads ICASA weather files for multiple points from an uploaded spatial file.
 
-Behavior:
+**Form fields:**
+- `shapefile`: Required spatial file upload (`.shp`, `.geojson`, `.json`, or `.zip`)
+- `start_date`: Start date in `YYYY-MM-DD` format
+- `end_date`: End date in `YYYY-MM-DD` format
+- `rain_source`: Optional, defaults to `both`
+- `selected_parameters`: Optional comma-separated ICASA variables
+- `shapefile_shx`: Optional `.shx` companion file
+- `shapefile_dbf`: Optional `.dbf` companion file
+
+**Behavior:**
 - Uses uploaded point IDs when available (`id`, `point_id`, `pid`, `cell_id`)
-- Generates deterministic 8-character hash IDs only when IDs are missing
-- Includes generated ID manifest as GeoJSON under `shapefile/` when fallback IDs are used
+- Generates deterministic 8-character hash IDs when IDs are missing
+- Includes a GeoJSON manifest under `shapefile/` when fallback IDs are generated
 
 ### POST /api/validate-shapefile
-Validate uploaded spatial files and preview coordinate counts before processing.
+Validates an uploaded spatial file and returns preview information without generating ICASA output.
+
+**Form fields:**
+- `shapefile`: Required spatial file upload (`.shp`, `.geojson`, `.json`, or `.zip`)
+- `shapefile_shx`: Optional `.shx` companion file
+- `shapefile_dbf`: Optional `.dbf` companion file
 
 ## CORS Configuration
 
