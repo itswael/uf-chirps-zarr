@@ -21,7 +21,6 @@ class NasaPowerConfig:
         "https://nasa-power.s3.us-west-2.amazonaws.com/"
         "merra2/temporal/power_merra2_daily_temporal_lst.zarr"
     )
-    
     # ==================== Variable Sets ====================
     # Solar variables (from SYN1deg)
     SOLAR_VARS = ["ALLSKY_SFC_SW_DWN"]  # SRAD source (W m^-2) -> convert to MJ m^-2 d^-1
