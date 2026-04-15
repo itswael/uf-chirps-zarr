@@ -44,6 +44,9 @@ class NasaPowerS3Fetcher:
         self._local_subset_cache_limit = 4
         self._local_cache_root = Path(tempfile.gettempdir()) / "uf-chirps-zarr" / "nasa-power-subsets"
         self._local_cache_root.mkdir(parents=True, exist_ok=True)
+        # Track dataset time ranges for validation
+        self._syn1_time_range: Optional[tuple] = None
+        self._merra2_time_range: Optional[tuple] = None
     
     def _open_power_zarr(self, zarr_url: str) -> xr.Dataset:
         """
@@ -113,6 +116,17 @@ class NasaPowerS3Fetcher:
             self._syn1_ds, self._merra2_ds = await asyncio.gather(syn1_task, merra2_task)
             self._datasets_loaded = True
             
+            # Cache time ranges for validation
+            if self._syn1_ds is not None:
+                time_values = pd.to_datetime(self._syn1_ds.time.values)
+                self._syn1_time_range = (time_values[0], time_values[-1])
+                logger.info(f"SYN1deg time range: {self._syn1_time_range[0]} to {self._syn1_time_range[1]}")
+            
+            if self._merra2_ds is not None:
+                time_values = pd.to_datetime(self._merra2_ds.time.values)
+                self._merra2_time_range = (time_values[0], time_values[-1])
+                logger.info(f"MERRA-2 time range: {self._merra2_time_range[0]} to {self._merra2_time_range[1]}")
+            
             logger.info("NASA POWER datasets loaded successfully")
             
         except Exception as e:
@@ -138,6 +152,46 @@ class NasaPowerS3Fetcher:
         if first <= last:
             return slice(lower, upper)
         return slice(upper, lower)
+
+    def _check_date_range_available(
+        self,
+        start_date: date,
+        end_date: date,
+        dataset_name: str
+    ) -> bool:
+        """
+        Check if the requested date range has data in the specified dataset.
+        
+        Args:
+            start_date: Start date
+            end_date: End date
+            dataset_name: Either 'syn1' or 'merra2'
+            
+        Returns:
+            True if data is available for any part of the date range
+        """
+        if dataset_name == "syn1" and self._syn1_time_range:
+            data_start, data_end = self._syn1_time_range
+        elif dataset_name == "merra2" and self._merra2_time_range:
+            data_start, data_end = self._merra2_time_range
+        else:
+            # Dataset not loaded yet
+            return True
+        
+        # Convert dates to timestamps for comparison
+        req_start = pd.Timestamp(start_date)
+        req_end = pd.Timestamp(end_date)
+        
+        # Check if requested range overlaps with available data
+        overlaps = (req_start <= data_end) and (req_end >= data_start)
+        
+        if not overlaps:
+            logger.warning(
+                f"{dataset_name.upper()} dataset has no data for requested range "
+                f"{start_date} to {end_date} (available: {data_start.date()} to {data_end.date()})"
+            )
+        
+        return overlaps
 
     def _slice_date_range(
         self,
@@ -316,7 +370,10 @@ class NasaPowerS3Fetcher:
             variables: List of variables to extract
             
         Returns:
-            Sliced xarray Dataset
+            Sliced xarray Dataset (may be empty if no data for date range)
+            
+        Raises:
+            KeyError: If none of the requested variables exist in the dataset
         """
         # Filter for available variables
         avail_vars = [v for v in variables if v in ds.data_vars]
@@ -342,8 +399,15 @@ class NasaPowerS3Fetcher:
             )
         )
         
+        # Check if we got any data
+        if sub.sizes.get("time", 0) == 0:
+            logger.debug(
+                f"No data retrieved for point ({latitude}, {longitude}) "
+                f"on {start_date} to {end_date} from dataset with vars {avail_vars}"
+            )
+        
         return sub
-    
+
     async def fetch_nasa_power_data(
         self,
         latitude: float,
@@ -364,9 +428,13 @@ class NasaPowerS3Fetcher:
             end_date: End date
             include_solar: Include solar radiation data
             include_met: Include meteorological data
+            dataset_overrides: Optional pre-sliced datasets to use instead of fetching
             
         Returns:
             DataFrame with time series data
+            
+        Raises:
+            ValueError: If no data is available for the requested date range
         """
         # Ensure datasets are loaded
         if not self._datasets_loaded:
@@ -376,8 +444,12 @@ class NasaPowerS3Fetcher:
             df = None
             source_datasets = dataset_overrides or await self.prepare_date_range_cache(start_date, end_date)
             
+            # Check date range availability
+            merra2_available = self._check_date_range_available(start_date, end_date, "merra2")
+            syn1_available = self._check_date_range_available(start_date, end_date, "syn1")
+            
             # Fetch meteorological data from MERRA-2
-            if include_met and source_datasets.get("merra2") is not None:
+            if include_met and source_datasets.get("merra2") is not None and merra2_available:
                 loop = asyncio.get_event_loop()
                 sub_met = await loop.run_in_executor(
                     None,
@@ -390,13 +462,26 @@ class NasaPowerS3Fetcher:
                     nasa_power_config.MET_VARS
                 )
                 
-                # Convert to DataFrame and rename variables
-                df_met = sub_met.to_dataframe().reset_index()
-                df_met = df_met.rename(columns=nasa_power_config.RENAME_MET_VARS)
-                df = df_met
+                # Only process if we got data
+                if sub_met.sizes.get("time", 0) > 0:
+                    # Convert to DataFrame and rename variables
+                    df_met = sub_met.to_dataframe().reset_index()
+                    df_met = df_met.rename(columns=nasa_power_config.RENAME_MET_VARS)
+                    df = df_met
+                    logger.debug(f"Retrieved {len(df)} days of meteorological data from MERRA-2")
+                else:
+                    logger.warning(
+                        f"MERRA-2 returned no data for ({latitude}, {longitude}) "
+                        f"on {start_date} to {end_date}"
+                    )
+            elif include_met and not merra2_available:
+                logger.warning(
+                    f"MERRA-2 meteorological data not available for {start_date} to {end_date}. "
+                    f"MERRA-2 only covers from {self._merra2_time_range[0].date() if self._merra2_time_range else 'unknown'}"
+                )
             
-            # Fetch solar data from SYN1deg
-            if include_solar and source_datasets.get("syn1") is not None:
+            # Fetch solar data from SYN1deg when available
+            if include_solar and source_datasets.get("syn1") is not None and syn1_available:
                 loop = asyncio.get_event_loop()
                 sub_sol = await loop.run_in_executor(
                     None,
@@ -409,22 +494,58 @@ class NasaPowerS3Fetcher:
                     nasa_power_config.SOLAR_VARS
                 )
                 
-                # Convert to DataFrame and rename variables
-                df_sol = sub_sol.to_dataframe().reset_index()
-                df_sol = df_sol.rename(columns=nasa_power_config.RENAME_SOLAR_VARS)
-                
-                # Convert W/m^2 (mean power) to MJ/m^2/day
-                df_sol["SRAD"] = df_sol["SRAD_WM2"].astype(float) * 0.0864
-                df_sol = df_sol[["time", "SRAD"]]
-                
-                # Merge with meteorological data if available
-                if df is None:
-                    df = df_sol
+                # Only process if we got data
+                if sub_sol.sizes.get("time", 0) > 0:
+                    # Convert to DataFrame and rename variables
+                    df_sol = sub_sol.to_dataframe().reset_index()
+                    df_sol = df_sol.rename(columns=nasa_power_config.RENAME_SOLAR_VARS)
+                    
+                    # Convert W/m^2 (mean power) to MJ/m^2/day
+                    df_sol["SRAD"] = df_sol["SRAD_WM2"].astype(float) * 0.0864
+                    df_sol = df_sol[["time", "SRAD"]]
+                    
+                    # Merge with meteorological data if available
+                    if df is None:
+                        df = df_sol
+                    else:
+                        # Keep meteorological rows and fill missing solar with default later.
+                        df = pd.merge(df, df_sol, on="time", how="left")
+                    
+                    logger.debug(f"Retrieved solar radiation data from SYN1deg")
                 else:
-                    df = pd.merge(df, df_sol, on="time", how="inner")
+                    logger.warning(
+                        f"SYN1deg returned no solar data for ({latitude}, {longitude}) "
+                        f"on {start_date} to {end_date}"
+                    )
+            elif include_solar and not syn1_available:
+                logger.warning(
+                    f"SYN1deg solar data not available for {start_date} to {end_date}. "
+                    f"SYN1deg only covers from {self._syn1_time_range[0].date() if self._syn1_time_range else 'unknown'}"
+                )
+
+            # S3-only behavior: if solar is requested but unavailable/missing, set SRAD to -99
+            if include_solar:
+                if df is None:
+                    fallback_time = pd.date_range(start=start_date, end=end_date, freq="D")
+                    df = pd.DataFrame({"time": fallback_time, "SRAD": -99.0})
+                elif "SRAD" not in df.columns:
+                    df["SRAD"] = -99.0
+                else:
+                    df["SRAD"] = df["SRAD"].fillna(-99.0)
             
             if df is None:
-                raise ValueError("No data sources selected")
+                error_msg = (
+                    f"No NASA POWER data available for ({latitude}, {longitude}) "
+                    f"from {start_date} to {end_date}. "
+                )
+                if not merra2_available and not syn1_available:
+                    error_msg += (
+                        f"Requested date range is outside both datasets. "
+                        f"MERRA-2: {self._merra2_time_range[0].date() if self._merra2_time_range else 'unknown'} to {self._merra2_time_range[1].date() if self._merra2_time_range else 'unknown'}, "
+                        f"SYN1deg: {self._syn1_time_range[0].date() if self._syn1_time_range else 'unknown'} to {self._syn1_time_range[1].date() if self._syn1_time_range else 'unknown'}"
+                    )
+                
+                raise ValueError(error_msg)
             
             # Rename additional variables for ICASA compatibility
             rename_map = {
@@ -438,7 +559,7 @@ class NasaPowerS3Fetcher:
             df[numeric_cols] = df[numeric_cols].round(1)
             
             logger.info(
-                f"Fetched NASA POWER data: {len(df)} days, "
+                f"Successfully fetched NASA POWER data: {len(df)} days for ({latitude}, {longitude}), "
                 f"variables: {[c for c in df.columns if c not in ['time', 'lat', 'lon']]}"
             )
             
