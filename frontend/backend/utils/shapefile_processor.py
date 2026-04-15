@@ -84,7 +84,7 @@ class ShapefileProcessor:
             #         logger.info(f"Found ID column: {id_column}")
             #         break
 
-            for col_name in ['id', 'point_id', 'pid', 'cell_id']:
+            for col_name in ['id', 'point_id', 'pid', 'cell_id', 'id_column', 'cellid', 'pointid']:
                 if col_name in cols:
                     id_column = gdf.columns[cols.index(col_name)]
                     logger.info(f"Found ID column: {id_column}")
