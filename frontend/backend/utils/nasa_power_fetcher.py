@@ -31,13 +31,16 @@ class NasaPowerS3Fetcher:
     
     def __init__(self):
         """Initialize the fetcher"""
-        self._syn1_ds: Optional[xr.Dataset] = None
+        self._solar_buckets = nasa_power_config.get_solar_buckets()
+        self._solar_datasets: Dict[str, Optional[xr.Dataset]] = {
+            bucket: None for bucket in self._solar_buckets
+        }
         self._merra2_ds: Optional[xr.Dataset] = None
         self._datasets_loaded = False
         self._cache_lock = asyncio.Lock()
         self._date_slice_cache: Dict[str, OrderedDict[str, xr.Dataset]] = {
-            "syn1": OrderedDict(),
             "merra2": OrderedDict(),
+            **{f"solar:{bucket}": OrderedDict() for bucket in self._solar_buckets},
         }
         self._local_subset_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
         self._date_slice_cache_limit = 8
@@ -45,7 +48,9 @@ class NasaPowerS3Fetcher:
         self._local_cache_root = Path(tempfile.gettempdir()) / "uf-chirps-zarr" / "nasa-power-subsets"
         self._local_cache_root.mkdir(parents=True, exist_ok=True)
         # Track dataset time ranges for validation
-        self._syn1_time_range: Optional[tuple] = None
+        self._solar_time_ranges: Dict[str, Optional[tuple]] = {
+            bucket: None for bucket in self._solar_buckets
+        }
         self._merra2_time_range: Optional[tuple] = None
     
     def _open_power_zarr(self, zarr_url: str) -> xr.Dataset:
@@ -100,12 +105,15 @@ class NasaPowerS3Fetcher:
         try:
             # Load datasets in parallel using thread pool
             loop = asyncio.get_event_loop()
-            
-            syn1_task = loop.run_in_executor(
-                None,
-                self._open_power_zarr,
-                nasa_power_config.SYN1DAILY_ZARR_URL
-            )
+
+            solar_tasks = [
+                loop.run_in_executor(
+                    None,
+                    self._open_power_zarr,
+                    nasa_power_config.build_solar_zarr_url(bucket),
+                )
+                for bucket in self._solar_buckets
+            ]
             
             merra2_task = loop.run_in_executor(
                 None,
@@ -113,14 +121,27 @@ class NasaPowerS3Fetcher:
                 nasa_power_config.MERRA2DAILY_ZARR_URL
             )
             
-            self._syn1_ds, self._merra2_ds = await asyncio.gather(syn1_task, merra2_task)
+            all_results = await asyncio.gather(*solar_tasks, merra2_task)
+            solar_results = all_results[:-1]
+            self._merra2_ds = all_results[-1]
+
+            for bucket, dataset in zip(self._solar_buckets, solar_results):
+                self._solar_datasets[bucket] = dataset
+
             self._datasets_loaded = True
             
             # Cache time ranges for validation
-            if self._syn1_ds is not None:
-                time_values = pd.to_datetime(self._syn1_ds.time.values)
-                self._syn1_time_range = (time_values[0], time_values[-1])
-                logger.info(f"SYN1deg time range: {self._syn1_time_range[0]} to {self._syn1_time_range[1]}")
+            for bucket, dataset in self._solar_datasets.items():
+                if dataset is None:
+                    continue
+                time_values = pd.to_datetime(dataset.time.values)
+                self._solar_time_ranges[bucket] = (time_values[0], time_values[-1])
+                logger.info(
+                    "Solar dataset '%s' time range: %s to %s",
+                    bucket,
+                    self._solar_time_ranges[bucket][0],
+                    self._solar_time_ranges[bucket][1],
+                )
             
             if self._merra2_ds is not None:
                 time_values = pd.to_datetime(self._merra2_ds.time.values)
@@ -165,13 +186,17 @@ class NasaPowerS3Fetcher:
         Args:
             start_date: Start date
             end_date: End date
-            dataset_name: Either 'syn1' or 'merra2'
+            dataset_name: 'merra2' or 'solar:<bucket>'
             
         Returns:
             True if data is available for any part of the date range
         """
-        if dataset_name == "syn1" and self._syn1_time_range:
-            data_start, data_end = self._syn1_time_range
+        if dataset_name.startswith("solar:"):
+            bucket = dataset_name.split(":", 1)[1]
+            solar_range = self._solar_time_ranges.get(bucket)
+            if solar_range is None:
+                return True
+            data_start, data_end = solar_range
         elif dataset_name == "merra2" and self._merra2_time_range:
             data_start, data_end = self._merra2_time_range
         else:
@@ -192,6 +217,59 @@ class NasaPowerS3Fetcher:
             )
         
         return overlaps
+
+    @staticmethod
+    def _clip_date_range(start_date: date, end_date: date, range_start: date, range_end: date) -> Optional[tuple]:
+        """Clip a requested date range to a dataset range."""
+        clipped_start = max(start_date, range_start)
+        clipped_end = min(end_date, range_end)
+        if clipped_start > clipped_end:
+            return None
+        return clipped_start, clipped_end
+
+    def _get_solar_segments(
+        self,
+        start_date: date,
+        end_date: date,
+        source_datasets: Dict[str, xr.Dataset]
+    ) -> List[Dict[str, Any]]:
+        """Build the solar dataset segments needed for the requested date range."""
+        segments: List[Dict[str, Any]] = []
+
+        configured_segments = nasa_power_config.get_solar_segments_for_range(start_date, end_date)
+        for configured in configured_segments:
+            bucket = configured["bucket"]
+            dataset_key = f"solar:{bucket}"
+            dataset = source_datasets.get(dataset_key)
+            if dataset is None:
+                continue
+
+            segment_start = configured["start_date"]
+            segment_end = configured["end_date"]
+
+            available_range = self._solar_time_ranges.get(bucket)
+            if available_range is not None:
+                clipped = self._clip_date_range(
+                    segment_start,
+                    segment_end,
+                    available_range[0].date(),
+                    available_range[1].date(),
+                )
+                if clipped is None:
+                    continue
+                segment_start, segment_end = clipped
+
+            segments.append(
+                {
+                    "dataset_name": dataset_key,
+                    "dataset": dataset,
+                    "bucket": bucket,
+                    "start_date": segment_start,
+                    "end_date": segment_end,
+                }
+            )
+
+        return segments
 
     def _slice_date_range(
         self,
@@ -265,9 +343,16 @@ class NasaPowerS3Fetcher:
         cache_key = self._format_date_cache_key(start_date, end_date)
 
         async with self._cache_lock:
-            dataset_configs = (
-                ("merra2", self._merra2_ds, nasa_power_config.MET_VARS),
-                ("syn1", self._syn1_ds, nasa_power_config.SOLAR_VARS),
+            dataset_configs: List[tuple] = [
+                ("merra2", self._merra2_ds, nasa_power_config.MET_VARS)
+            ]
+            dataset_configs.extend(
+                (
+                    f"solar:{bucket}",
+                    self._solar_datasets.get(bucket),
+                    nasa_power_config.SOLAR_VARS,
+                )
+                for bucket in self._solar_buckets
             )
 
             for dataset_name, ds, variables in dataset_configs:
@@ -276,9 +361,12 @@ class NasaPowerS3Fetcher:
 
                 cache = self._date_slice_cache[dataset_name]
                 if cache_key not in cache:
-                    cache[cache_key] = self._slice_date_range(ds, start_date, end_date, variables)
-                    self._trim_date_slice_cache(dataset_name)
-                cache.move_to_end(cache_key)
+                    sliced = self._slice_date_range(ds, start_date, end_date, variables)
+                    if sliced.sizes.get("time", 0) > 0:
+                        cache[cache_key] = sliced
+                        self._trim_date_slice_cache(dataset_name)
+                if cache_key in cache:
+                    cache.move_to_end(cache_key)
 
             return {
                 dataset_name: cache[cache_key]
@@ -313,22 +401,15 @@ class NasaPowerS3Fetcher:
             subset_dir.mkdir(parents=True, exist_ok=True)
 
             datasets = {
-                "merra2": self._materialize_local_subset(
-                    ds=date_datasets["merra2"],
-                    local_path=subset_dir / "merra2.zarr",
+                dataset_name: self._materialize_local_subset(
+                    ds=dataset,
+                    local_path=subset_dir / f"{dataset_name}.zarr",
                     min_lat=min_lat,
                     max_lat=max_lat,
                     min_lon=min_lon,
                     max_lon=max_lon,
-                ),
-                "syn1": self._materialize_local_subset(
-                    ds=date_datasets["syn1"],
-                    local_path=subset_dir / "syn1.zarr",
-                    min_lat=min_lat,
-                    max_lat=max_lat,
-                    min_lon=min_lon,
-                    max_lon=max_lon,
-                ),
+                )
+                for dataset_name, dataset in date_datasets.items()
             }
 
             self._local_subset_cache[cache_key] = {
@@ -446,7 +527,6 @@ class NasaPowerS3Fetcher:
             
             # Check date range availability
             merra2_available = self._check_date_range_available(start_date, end_date, "merra2")
-            syn1_available = self._check_date_range_available(start_date, end_date, "syn1")
             
             # Fetch meteorological data from MERRA-2
             if include_met and source_datasets.get("merra2") is not None and merra2_available:
@@ -480,48 +560,59 @@ class NasaPowerS3Fetcher:
                     f"MERRA-2 only covers from {self._merra2_time_range[0].date() if self._merra2_time_range else 'unknown'}"
                 )
             
-            # Fetch solar data from SYN1deg when available
-            if include_solar and source_datasets.get("syn1") is not None and syn1_available:
+            solar_segments = self._get_solar_segments(start_date, end_date, source_datasets) if include_solar else []
+            solar_frames: List[pd.DataFrame] = []
+
+            if include_solar and not solar_segments:
+                configured_ranges = ", ".join(
+                    f"{segment['bucket']}: {segment['start_date']} to {segment['end_date']}"
+                    for segment in nasa_power_config.get_solar_segments_for_range(start_date, end_date)
+                )
+                logger.warning(
+                    f"Solar radiation data not available for {start_date} to {end_date}. "
+                    f"Configured bucket segments: {configured_ranges if configured_ranges else 'none'}"
+                )
+
+            for segment in solar_segments:
                 loop = asyncio.get_event_loop()
                 sub_sol = await loop.run_in_executor(
                     None,
                     self._slice_point,
-                    source_datasets["syn1"],
+                    segment["dataset"],
                     latitude,
                     longitude,
-                    start_date,
-                    end_date,
+                    segment["start_date"],
+                    segment["end_date"],
                     nasa_power_config.SOLAR_VARS
                 )
-                
-                # Only process if we got data
+
                 if sub_sol.sizes.get("time", 0) > 0:
-                    # Convert to DataFrame and rename variables
                     df_sol = sub_sol.to_dataframe().reset_index()
                     df_sol = df_sol.rename(columns=nasa_power_config.RENAME_SOLAR_VARS)
-                    
-                    # Convert W/m^2 (mean power) to MJ/m^2/day
                     df_sol["SRAD"] = df_sol["SRAD_WM2"].astype(float) * 0.0864
-                    df_sol = df_sol[["time", "SRAD"]]
-                    
-                    # Merge with meteorological data if available
-                    if df is None:
-                        df = df_sol
-                    else:
-                        # Keep meteorological rows and fill missing solar with default later.
-                        df = pd.merge(df, df_sol, on="time", how="left")
-                    
-                    logger.debug(f"Retrieved solar radiation data from SYN1deg")
+                    solar_frames.append(df_sol[["time", "SRAD"]])
+                    logger.debug(
+                        f"Retrieved solar radiation data from {segment['bucket']} ({segment['dataset_name']}) for "
+                        f"{segment['start_date']} to {segment['end_date']}"
+                    )
                 else:
                     logger.warning(
-                        f"SYN1deg returned no solar data for ({latitude}, {longitude}) "
-                        f"on {start_date} to {end_date}"
+                        f"{segment['bucket']} ({segment['dataset_name']}) returned no solar data for ({latitude}, {longitude}) "
+                        f"on {segment['start_date']} to {segment['end_date']}"
                     )
-            elif include_solar and not syn1_available:
-                logger.warning(
-                    f"SYN1deg solar data not available for {start_date} to {end_date}. "
-                    f"SYN1deg only covers from {self._syn1_time_range[0].date() if self._syn1_time_range else 'unknown'}"
-                )
+
+            if solar_frames:
+                df_sol = pd.concat(solar_frames, ignore_index=True)
+                df_sol = df_sol.drop_duplicates(subset=["time"]).sort_values("time")
+
+                if df is None:
+                    df = df_sol
+                else:
+                    df = pd.merge(df, df_sol, on="time", how="left")
+
+            if include_solar and df is not None:
+                full_time_index = pd.DataFrame({"time": pd.date_range(start=start_date, end=end_date, freq="D")})
+                df = pd.merge(full_time_index, df, on="time", how="left")
 
             # S3-only behavior: if solar is requested but unavailable/missing, set SRAD to -99
             if include_solar:
@@ -538,11 +629,18 @@ class NasaPowerS3Fetcher:
                     f"No NASA POWER data available for ({latitude}, {longitude}) "
                     f"from {start_date} to {end_date}. "
                 )
-                if not merra2_available and not syn1_available:
+                solar_available = bool(solar_segments)
+                if not merra2_available and not solar_available:
+                    solar_ranges = ", ".join(
+                        f"{bucket}: "
+                        f"{time_range[0].date() if time_range else 'unknown'} to "
+                        f"{time_range[1].date() if time_range else 'unknown'}"
+                        for bucket, time_range in self._solar_time_ranges.items()
+                    )
                     error_msg += (
                         f"Requested date range is outside both datasets. "
                         f"MERRA-2: {self._merra2_time_range[0].date() if self._merra2_time_range else 'unknown'} to {self._merra2_time_range[1].date() if self._merra2_time_range else 'unknown'}, "
-                        f"SYN1deg: {self._syn1_time_range[0].date() if self._syn1_time_range else 'unknown'} to {self._syn1_time_range[1].date() if self._syn1_time_range else 'unknown'}"
+                        f"Solar buckets: {solar_ranges if solar_ranges else 'unknown'}"
                     )
                 
                 raise ValueError(error_msg)
@@ -584,13 +682,16 @@ class NasaPowerS3Fetcher:
             'meteorological': {}
         }
         
-        if self._syn1_ds is not None:
-            time_values = self._syn1_ds.time.values
-            lat_values = self._syn1_ds.lat.values
-            lon_values = self._syn1_ds.lon.values
-            
-            metadata['solar'] = {
-                'variables': list(self._syn1_ds.data_vars),
+        for bucket, dataset in self._solar_datasets.items():
+            if dataset is None:
+                continue
+
+            time_values = dataset.time.values
+            lat_values = dataset.lat.values
+            lon_values = dataset.lon.values
+
+            metadata['solar'][bucket] = {
+                'variables': list(dataset.data_vars),
                 'time_range': {
                     'start': str(time_values[0]),
                     'end': str(time_values[-1]),
@@ -640,9 +741,11 @@ class NasaPowerS3Fetcher:
     
     def close(self):
         """Close the datasets"""
-        if self._syn1_ds is not None:
-            self._syn1_ds.close()
-            self._syn1_ds = None
+        for bucket, dataset in self._solar_datasets.items():
+            if dataset is not None:
+                dataset.close()
+                self._solar_datasets[bucket] = None
+                self._solar_time_ranges[bucket] = None
         
         if self._merra2_ds is not None:
             self._merra2_ds.close()
