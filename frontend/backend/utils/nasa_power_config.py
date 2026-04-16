@@ -2,6 +2,7 @@
 NASA POWER Configuration
 Constants and mappings for NASA POWER S3 data integration
 """
+from datetime import date
 from typing import Dict, List
 from pathlib import Path
 
@@ -16,6 +17,10 @@ class NasaPowerConfig:
     SYN1DAILY_ZARR_URL = (
         "https://nasa-power.s3.us-west-2.amazonaws.com/"
         "syn1deg/temporal/power_syn1deg_daily_temporal_lst.zarr"
+    )
+    LEGACY_SYN1DAILY_ZARR_URL = (
+        "https://nasa-power.s3.us-west-2.amazonaws.com/"
+        "srb/temporal/power_srb_daily_temporal_lst.zarr"
     )
     MERRA2DAILY_ZARR_URL = (
         "https://nasa-power.s3.us-west-2.amazonaws.com/"
@@ -136,6 +141,11 @@ class NasaPowerConfig:
     
     # CHIRPS resolution (degrees)
     CHIRPS_RESOLUTION = 0.05
+
+    # SYN1deg archive split for solar radiation (SRAD)
+    SYN1_LEGACY_START_DATE = date(1984, 1, 1)
+    SYN1_LEGACY_END_DATE = date(2000, 12, 31)
+    SYN1_CURRENT_START_DATE = date(2001, 1, 1)
     
     # ==================== Default ICASA Header Settings ====================
     DEFAULT_SITE_CODE = "UFLC"
