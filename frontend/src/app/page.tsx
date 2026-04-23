@@ -21,6 +21,7 @@ import {
 } from '@mui/material';
 import { Menu as MenuIcon, Close as CloseIcon, Info } from '@mui/icons-material';
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
 import appConfig from '@/config/app.config';
 import { apiClient } from '@/utils/api';
 import DateRangeSelector from '@/components/DateRangeSelector';
@@ -355,9 +356,25 @@ export default function Home() {
           <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
             {appConfig.title}
           </Typography>
-          <Typography variant="caption" sx={{ display: { xs: 'none', sm: 'block' } }}>
-            v{appConfig.version}
-          </Typography>
+          <Stack direction="row" spacing={1} sx={{ mr: 2 }}>
+            <Button
+              component={Link}
+              href="/"
+              color="inherit"
+              variant="outlined"
+              sx={{ borderColor: 'rgba(255,255,255,0.5)' }}
+            >
+              Home
+            </Button>
+            <Button
+              component={Link}
+              href="/comparison"
+              color="inherit"
+              variant="text"
+            >
+              Data Comparison
+            </Button>
+          </Stack>
         </Toolbar>
       </AppBar>
 
