@@ -37,10 +37,10 @@ import axios from 'axios';
 import dayjs, { Dayjs } from 'dayjs';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import {
+  Bar,
+  BarChart,
   CartesianGrid,
   Legend,
-  Line,
-  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -168,6 +168,41 @@ function formatNumber(value: number | null, digits = 3): string {
 
 function sourceLabel(sourceKey: SourceKey): string {
   return SOURCE_OPTIONS.find((source) => source.key === sourceKey)?.label || sourceKey;
+}
+
+function sourceTileConfig(stats: BasicStats, units: string) {
+  return [
+    {
+      label: 'Available',
+      value: `${stats.availableCount}`,
+      color: '#2196f3',
+    },
+    {
+      label: 'Missing',
+      value: `${stats.missingCount}`,
+      color: '#ff9800',
+    },
+    {
+      label: 'Mean',
+      value: `${formatNumber(stats.mean, 2)} ${units}`,
+      color: '#4caf50',
+    },
+    {
+      label: 'Max',
+      value: `${formatNumber(stats.max, 2)} ${units}`,
+      color: '#f44336',
+    },
+    {
+      label: 'Min',
+      value: `${formatNumber(stats.min, 2)} ${units}`,
+      color: '#9c27b0',
+    },
+    {
+      label: 'Sum',
+      value: `${stats.sum.toFixed(2)} ${units}`,
+      color: '#00bcd4',
+    },
+  ];
 }
 
 export default function DataComparisonPage() {
@@ -326,6 +361,7 @@ export default function DataComparisonPage() {
 
   const source1Stats = useMemo(() => computeBasicStats(source1Series), [source1Series]);
   const source2Stats = useMemo(() => computeBasicStats(source2Series), [source2Series]);
+  const chartKey = `${source1}-${source2}-${selectedVariable}-${startDate}-${endDate}`;
 
   const differenceStats = useMemo(() => {
     if (comparisonRows.length === 0) {
@@ -589,22 +625,47 @@ export default function DataComparisonPage() {
                     ))}
                   </Select>
                 </FormControl>
-                <Chip label={selectedVariableMeta?.units || ''} size="small" sx={{ mt: 2 }} />
+
+                <Chip label={selectedVariableMeta?.units || ''} size="small" sx={{ mt: 2, mb: 1 }} />
+
+                <Grid container spacing={1}>
+                  {sourceTileConfig(source1Stats, selectedVariableMeta?.units || '').map((tile) => (
+                    <Grid item xs={6} key={`s1-${tile.label}`}>
+                      <Card
+                        elevation={1}
+                        sx={{
+                          bgcolor: `${tile.color}10`,
+                          borderLeft: `4px solid ${tile.color}`,
+                        }}
+                      >
+                        <CardContent sx={{ px: 1, py: 1 }}>
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                            {tile.label}
+                          </Typography>
+                          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                            {tile.value}
+                          </Typography>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                  ))}
+                </Grid>
               </Paper>
             </Grid>
 
             <Grid item xs={12} md={8}>
-              <Paper elevation={2} sx={{ p: 2, minHeight: 420 }}>
+              <Paper elevation={2} sx={{ p: 2, minHeight: 560 }}>
                 <Typography variant="h6" gutterBottom>
                   Source Comparison Plot
                 </Typography>
                 {loading ? (
-                  <Box sx={{ minHeight: 340, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                  <Box sx={{ minHeight: 480, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
                     <CircularProgress />
                   </Box>
                 ) : (
-                  <ResponsiveContainer width="100%" height={340}>
-                    <LineChart
+                  <ResponsiveContainer width="100%" height={480}>
+                    <BarChart
+                      key={chartKey}
                       data={mergedData}
                       margin={{ top: 12, right: 18, left: 10, bottom: 56 }}
                     >
@@ -631,25 +692,19 @@ export default function DataComparisonPage() {
                         }}
                       />
                       <Legend />
-                      <Line
-                        type="monotone"
+                      <Bar
                         dataKey="source1"
                         name={sourceLabel(source1)}
-                        stroke="#1976d2"
-                        strokeWidth={2}
-                        dot={false}
-                        connectNulls={false}
+                        fill="#1976d2"
+                        maxBarSize={14}
                       />
-                      <Line
-                        type="monotone"
+                      <Bar
                         dataKey="source2"
                         name={sourceLabel(source2)}
-                        stroke="#ef6c00"
-                        strokeWidth={2}
-                        dot={false}
-                        connectNulls={false}
+                        fill="#ef6c00"
+                        maxBarSize={14}
                       />
-                    </LineChart>
+                    </BarChart>
                   </ResponsiveContainer>
                 )}
               </Paper>
@@ -672,59 +727,49 @@ export default function DataComparisonPage() {
                     ))}
                   </Select>
                 </FormControl>
-                <Chip label={`${mergedData.length} days`} size="small" sx={{ mt: 2 }} />
+
+                <Chip label={selectedVariableMeta?.units || ''} size="small" sx={{ mt: 2, mb: 1 }} />
+
+                <Grid container spacing={1}>
+                  {sourceTileConfig(source2Stats, selectedVariableMeta?.units || '').map((tile) => (
+                    <Grid item xs={6} key={`s2-${tile.label}`}>
+                      <Card
+                        elevation={1}
+                        sx={{
+                          bgcolor: `${tile.color}10`,
+                          borderLeft: `4px solid ${tile.color}`,
+                        }}
+                      >
+                        <CardContent sx={{ px: 1, py: 1 }}>
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                            {tile.label}
+                          </Typography>
+                          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                            {tile.value}
+                          </Typography>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                  ))}
+                </Grid>
               </Paper>
             </Grid>
           </Grid>
 
-          <Grid container spacing={2}>
-            <Grid item xs={12} md={2}>
-              <Card elevation={2}>
-                <CardContent>
-                  <Typography variant="subtitle2" gutterBottom>
-                    {sourceLabel(source1)}
-                  </Typography>
-                  <Typography variant="body2">Available: {source1Stats.availableCount}</Typography>
-                  <Typography variant="body2">Missing: {source1Stats.missingCount}</Typography>
-                  <Typography variant="body2">Min: {formatNumber(source1Stats.min, 3)}</Typography>
-                  <Typography variant="body2">Max: {formatNumber(source1Stats.max, 3)}</Typography>
-                  <Typography variant="body2">Mean: {formatNumber(source1Stats.mean, 3)}</Typography>
-                  <Typography variant="body2">Sum: {source1Stats.sum.toFixed(3)}</Typography>
-                </CardContent>
-              </Card>
-            </Grid>
-
-            <Grid item xs={12} md={8}>
-              <Card elevation={2}>
-                <CardContent>
-                  <Typography variant="subtitle2" gutterBottom>
-                    Differences ({sourceLabel(source1)} - {sourceLabel(source2)})
-                  </Typography>
-                  <Typography variant="body2">Different entries: {differenceStats.differenceCount}</Typography>
-                  <Typography variant="body2">Sum difference: {differenceStats.sumDiff.toFixed(6)}</Typography>
-                  <Typography variant="body2">Sum absolute difference: {differenceStats.sumAbsDiff.toFixed(6)}</Typography>
-                  <Typography variant="body2">Mean absolute difference: {differenceStats.meanAbsDiff.toFixed(6)}</Typography>
-                  <Typography variant="body2">Max absolute difference: {differenceStats.maxAbsDiff.toFixed(6)}</Typography>
-                </CardContent>
-              </Card>
-            </Grid>
-
-            <Grid item xs={12} md={2}>
-              <Card elevation={2}>
-                <CardContent>
-                  <Typography variant="subtitle2" gutterBottom>
-                    {sourceLabel(source2)}
-                  </Typography>
-                  <Typography variant="body2">Available: {source2Stats.availableCount}</Typography>
-                  <Typography variant="body2">Missing: {source2Stats.missingCount}</Typography>
-                  <Typography variant="body2">Min: {formatNumber(source2Stats.min, 3)}</Typography>
-                  <Typography variant="body2">Max: {formatNumber(source2Stats.max, 3)}</Typography>
-                  <Typography variant="body2">Mean: {formatNumber(source2Stats.mean, 3)}</Typography>
-                  <Typography variant="body2">Sum: {source2Stats.sum.toFixed(3)}</Typography>
-                </CardContent>
-              </Card>
-            </Grid>
-          </Grid>
+          <Box sx={{ mt: 3 }}>
+            <Card elevation={2}>
+              <CardContent>
+                <Typography variant="subtitle2" gutterBottom>
+                  Differences ({sourceLabel(source1)} - {sourceLabel(source2)})
+                </Typography>
+                <Typography variant="body2">Different entries: {differenceStats.differenceCount}</Typography>
+                <Typography variant="body2">Sum difference: {differenceStats.sumDiff.toFixed(6)}</Typography>
+                <Typography variant="body2">Sum absolute difference: {differenceStats.sumAbsDiff.toFixed(6)}</Typography>
+                <Typography variant="body2">Mean absolute difference: {differenceStats.meanAbsDiff.toFixed(6)}</Typography>
+                <Typography variant="body2">Max absolute difference: {differenceStats.maxAbsDiff.toFixed(6)}</Typography>
+              </CardContent>
+            </Card>
+          </Box>
         </Container>
       </Box>
 
