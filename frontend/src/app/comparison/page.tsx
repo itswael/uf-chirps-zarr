@@ -77,6 +77,13 @@ type DifferenceRow = {
   absDiff: number;
 };
 
+type ComparisonPoint = {
+  date: string;
+  displayDate: string;
+  source1: number;
+  source2: number;
+};
+
 const VARIABLE_OPTIONS: Array<{ key: VariableKey; label: string; units: string }> = [
   { key: 'RAIN', label: 'Rainfall', units: 'mm/day' },
   { key: 'T2M', label: 'Average Temperature (T2M)', units: 'degC' },
@@ -125,7 +132,20 @@ function toNasaDate(date: string): string {
 }
 
 function normalizeIsoDate(value: string): string {
-  return value.includes('T') ? value.split('T')[0] : value;
+  const parsed = dayjs(value);
+  if (parsed.isValid()) {
+    return parsed.format('YYYY-MM-DD');
+  }
+
+  if (value.includes('T')) {
+    return value.split('T')[0];
+  }
+
+  if (value.includes(' ')) {
+    return value.split(' ')[0];
+  }
+
+  return value;
 }
 
 function formatDateLabel(dateString: string): string {
@@ -171,6 +191,39 @@ function formatNumber(value: number | null, digits = 3): string {
 
 function sourceLabel(sourceKey: SourceKey): string {
   return SOURCE_OPTIONS.find((source) => source.key === sourceKey)?.label || sourceKey;
+}
+
+function buildComparisonPoints(
+  source1Series: TimeSeriesRecord[],
+  source2Series: TimeSeriesRecord[]
+): ComparisonPoint[] {
+  const map1 = new Map<string, number>();
+  const map2 = new Map<string, number>();
+
+  source1Series.forEach((entry) => {
+    const rounded = roundToOneDecimal(entry.value);
+    if (rounded !== null && Number.isFinite(rounded)) {
+      map1.set(entry.date, rounded);
+    }
+  });
+
+  source2Series.forEach((entry) => {
+    const rounded = roundToOneDecimal(entry.value);
+    if (rounded !== null && Number.isFinite(rounded)) {
+      map2.set(entry.date, rounded);
+    }
+  });
+
+  const overlapDates = Array.from(map1.keys())
+    .filter((date) => map2.has(date))
+    .sort();
+
+  return overlapDates.map((date) => ({
+    date,
+    displayDate: formatDateLabel(date),
+    source1: map1.get(date) as number,
+    source2: map2.get(date) as number,
+  }));
 }
 
 function sourceTileConfig(stats: BasicStats, units: string) {
@@ -334,32 +387,16 @@ export default function DataComparisonPage() {
     };
   }, [location, source1, source2, selectedVariable, startDate, endDate]);
 
-  const mergedData = useMemo(() => {
-    const map1 = new Map<string, number | null>();
-    const map2 = new Map<string, number | null>();
-
-    source1Series.forEach((entry) => map1.set(entry.date, entry.value));
-    source2Series.forEach((entry) => map2.set(entry.date, entry.value));
-
-    const allDates = Array.from(new Set([...map1.keys(), ...map2.keys()])).sort();
-
-    return allDates.map((date) => ({
-      date,
-      displayDate: formatDateLabel(date),
-      source1: map1.has(date) ? map1.get(date) : null,
-      source2: map2.has(date) ? map2.get(date) : null,
-    }));
-  }, [source1Series, source2Series]);
+  const mergedData = useMemo(
+    () => buildComparisonPoints(source1Series, source2Series),
+    [source1Series, source2Series]
+  );
 
   const comparisonRows = useMemo(() => {
     const tolerance = 1e-6;
     const rows: DifferenceRow[] = [];
 
     mergedData.forEach((entry) => {
-      if (entry.source1 === null || entry.source2 === null) {
-        return;
-      }
-
       const diff = entry.source1 - entry.source2;
       const absDiff = Math.abs(diff);
 
@@ -377,17 +414,18 @@ export default function DataComparisonPage() {
     return rows;
   }, [mergedData]);
 
-  const overlapRows = useMemo(
-    () => mergedData.filter((entry) => entry.source1 !== null && entry.source2 !== null),
+  const source1Stats = useMemo(
+    () => computeBasicStats(mergedData.map((entry) => ({ date: entry.date, value: entry.source1 }))),
     [mergedData]
   );
-
-  const source1Stats = useMemo(() => computeBasicStats(source1Series), [source1Series]);
-  const source2Stats = useMemo(() => computeBasicStats(source2Series), [source2Series]);
+  const source2Stats = useMemo(
+    () => computeBasicStats(mergedData.map((entry) => ({ date: entry.date, value: entry.source2 }))),
+    [mergedData]
+  );
   const chartKey = `${source1}-${source2}-${selectedVariable}-${startDate}-${endDate}`;
 
   const differenceStats = useMemo(() => {
-    if (overlapRows.length === 0) {
+    if (mergedData.length === 0) {
       return {
         comparedCount: 0,
         differenceCount: 0,
@@ -399,10 +437,8 @@ export default function DataComparisonPage() {
     }
 
     const tolerance = 1e-6;
-    const diffs = overlapRows.map((row) => {
-      const source1 = row.source1 as number;
-      const source2 = row.source2 as number;
-      const diff = source1 - source2;
+    const diffs = mergedData.map((row) => {
+      const diff = row.source1 - row.source2;
       return {
         diff,
         absDiff: Math.abs(diff),
@@ -415,14 +451,14 @@ export default function DataComparisonPage() {
     const maxAbsDiff = Math.max(...diffs.map((row) => row.absDiff));
 
     return {
-      comparedCount: overlapRows.length,
+      comparedCount: mergedData.length,
       differenceCount,
       sumDiff,
       sumAbsDiff,
-      meanAbsDiff: sumAbsDiff / overlapRows.length,
+      meanAbsDiff: sumAbsDiff / mergedData.length,
       maxAbsDiff,
     };
-  }, [overlapRows]);
+  }, [mergedData]);
 
   const selectedVariableMeta = VARIABLE_OPTIONS.find((variable) => variable.key === selectedVariable);
 
@@ -974,7 +1010,7 @@ async function fetchSeriesForSource(
       .sort()
       .map((yyyymmdd) => ({
         date: `${yyyymmdd.slice(0, 4)}-${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(6, 8)}`,
-        value: roundToOneDecimal(toNumericOrNull(paramValues[yyyymmdd])),
+        value: toNumericOrNull(paramValues[yyyymmdd]),
       }));
   }
 
