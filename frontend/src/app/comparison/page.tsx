@@ -117,6 +117,9 @@ const NASA_API_PARAM_MAP: Record<VariableKey, string> = {
   SRAD: 'ALLSKY_SFC_SW_DWN',
 };
 
+const BACKEND_TIMEOUT_MS = 120000;
+const EXTERNAL_TIMEOUT_MS = 120000;
+
 function toNasaDate(date: string): string {
   return date.replaceAll('-', '');
 }
@@ -285,7 +288,7 @@ export default function DataComparisonPage() {
       setError(null);
 
       try {
-        const [firstSeries, secondSeries] = await Promise.all([
+        const [firstResult, secondResult] = await Promise.allSettled([
           fetchSeriesForSource(source1, selectedVariable, location.lat, location.lon, startDate, endDate),
           fetchSeriesForSource(source2, selectedVariable, location.lat, location.lon, startDate, endDate),
         ]);
@@ -294,8 +297,23 @@ export default function DataComparisonPage() {
           return;
         }
 
+        const firstSeries = firstResult.status === 'fulfilled' ? firstResult.value : [];
+        const secondSeries = secondResult.status === 'fulfilled' ? secondResult.value : [];
+
         setSource1Series(firstSeries);
         setSource2Series(secondSeries);
+
+        const errorParts: string[] = [];
+        if (firstResult.status === 'rejected') {
+          errorParts.push(`Source 1 (${sourceLabel(source1)}) failed: ${humanizeFetchError(firstResult.reason)}`);
+        }
+        if (secondResult.status === 'rejected') {
+          errorParts.push(`Source 2 (${sourceLabel(source2)}) failed: ${humanizeFetchError(secondResult.reason)}`);
+        }
+
+        if (errorParts.length > 0) {
+          setError(errorParts.join(' | '));
+        }
       } catch (fetchError: any) {
         if (active) {
           setError(fetchError?.message || 'Failed to fetch comparison data');
@@ -359,13 +377,19 @@ export default function DataComparisonPage() {
     return rows;
   }, [mergedData]);
 
+  const overlapRows = useMemo(
+    () => mergedData.filter((entry) => entry.source1 !== null && entry.source2 !== null),
+    [mergedData]
+  );
+
   const source1Stats = useMemo(() => computeBasicStats(source1Series), [source1Series]);
   const source2Stats = useMemo(() => computeBasicStats(source2Series), [source2Series]);
   const chartKey = `${source1}-${source2}-${selectedVariable}-${startDate}-${endDate}`;
 
   const differenceStats = useMemo(() => {
-    if (comparisonRows.length === 0) {
+    if (overlapRows.length === 0) {
       return {
+        comparedCount: 0,
         differenceCount: 0,
         sumDiff: 0,
         sumAbsDiff: 0,
@@ -374,18 +398,31 @@ export default function DataComparisonPage() {
       };
     }
 
-    const sumDiff = comparisonRows.reduce((acc, row) => acc + row.diff, 0);
-    const sumAbsDiff = comparisonRows.reduce((acc, row) => acc + row.absDiff, 0);
-    const maxAbsDiff = Math.max(...comparisonRows.map((row) => row.absDiff));
+    const tolerance = 1e-6;
+    const diffs = overlapRows.map((row) => {
+      const source1 = row.source1 as number;
+      const source2 = row.source2 as number;
+      const diff = source1 - source2;
+      return {
+        diff,
+        absDiff: Math.abs(diff),
+      };
+    });
+
+    const differenceCount = diffs.filter((row) => row.absDiff > tolerance).length;
+    const sumDiff = diffs.reduce((acc, row) => acc + row.diff, 0);
+    const sumAbsDiff = diffs.reduce((acc, row) => acc + row.absDiff, 0);
+    const maxAbsDiff = Math.max(...diffs.map((row) => row.absDiff));
 
     return {
-      differenceCount: comparisonRows.length,
+      comparedCount: overlapRows.length,
+      differenceCount,
       sumDiff,
       sumAbsDiff,
-      meanAbsDiff: sumAbsDiff / comparisonRows.length,
+      meanAbsDiff: sumAbsDiff / overlapRows.length,
       maxAbsDiff,
     };
-  }, [comparisonRows]);
+  }, [overlapRows]);
 
   const selectedVariableMeta = VARIABLE_OPTIONS.find((variable) => variable.key === selectedVariable);
 
@@ -585,7 +622,7 @@ export default function DataComparisonPage() {
                 variant="contained"
                 onClick={handleDownloadReport}
                 startIcon={<Download />}
-                disabled={!location || comparisonRows.length === 0}
+                disabled={!location || mergedData.length === 0 || loading}
               >
                 Download Report
               </Button>
@@ -619,7 +656,7 @@ export default function DataComparisonPage() {
                     onChange={(event) => setSource1(event.target.value as SourceKey)}
                   >
                     {SOURCE_OPTIONS.filter((option) => availableSources.includes(option.key)).map((option) => (
-                      <MenuItem key={option.key} value={option.key}>
+                      <MenuItem key={option.key} value={option.key} disabled={option.key === source2}>
                         {option.label}
                       </MenuItem>
                     ))}
@@ -759,14 +796,64 @@ export default function DataComparisonPage() {
           <Box sx={{ mt: 3 }}>
             <Card elevation={2}>
               <CardContent>
-                <Typography variant="subtitle2" gutterBottom>
+                <Typography variant="subtitle1" sx={{ fontWeight: 700 }} gutterBottom>
                   Differences ({sourceLabel(source1)} - {sourceLabel(source2)})
                 </Typography>
-                <Typography variant="body2">Different entries: {differenceStats.differenceCount}</Typography>
-                <Typography variant="body2">Sum difference: {differenceStats.sumDiff.toFixed(6)}</Typography>
-                <Typography variant="body2">Sum absolute difference: {differenceStats.sumAbsDiff.toFixed(6)}</Typography>
-                <Typography variant="body2">Mean absolute difference: {differenceStats.meanAbsDiff.toFixed(6)}</Typography>
-                <Typography variant="body2">Max absolute difference: {differenceStats.maxAbsDiff.toFixed(6)}</Typography>
+
+                <Grid container spacing={1}>
+                  {[
+                    {
+                      label: 'Compared Days',
+                      value: `${differenceStats.comparedCount}`,
+                      color: '#1976d2',
+                    },
+                    {
+                      label: 'Different Entries',
+                      value: `${differenceStats.differenceCount}`,
+                      color: '#ef6c00',
+                    },
+                    {
+                      label: 'Sum Diff',
+                      value: differenceStats.sumDiff.toFixed(4),
+                      color: '#8e24aa',
+                    },
+                    {
+                      label: 'Sum Abs Diff',
+                      value: differenceStats.sumAbsDiff.toFixed(4),
+                      color: '#00897b',
+                    },
+                    {
+                      label: 'Mean Abs Diff',
+                      value: differenceStats.meanAbsDiff.toFixed(4),
+                      color: '#43a047',
+                    },
+                    {
+                      label: 'Max Abs Diff',
+                      value: differenceStats.maxAbsDiff.toFixed(4),
+                      color: '#e53935',
+                    },
+                  ].map((tile) => (
+                    <Grid item xs={6} sm={4} md={2} key={tile.label}>
+                      <Card
+                        elevation={1}
+                        sx={{
+                          bgcolor: `${tile.color}10`,
+                          borderLeft: `4px solid ${tile.color}`,
+                          height: '100%',
+                        }}
+                      >
+                        <CardContent sx={{ px: 1.5, py: 1.25 }}>
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                            {tile.label}
+                          </Typography>
+                          <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                            {tile.value}
+                          </Typography>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                  ))}
+                </Grid>
               </CardContent>
             </Card>
           </Box>
@@ -831,11 +918,11 @@ async function fetchSeriesForSource(
   endDate: string
 ): Promise<TimeSeriesRecord[]> {
   if (source === 'chirps') {
-    const response = await apiClient.getTimeSeriesVariable({
+    const response = await fetchBackendVariableSeries({
       lat,
       lon,
-      start_date: startDate,
-      end_date: endDate,
+      startDate,
+      endDate,
       variable: 'RAIN',
     });
 
@@ -847,11 +934,11 @@ async function fetchSeriesForSource(
 
   if (source === 'nasa_s3') {
     const backendVariable = variable === 'RAIN' ? 'RAIN1' : variable;
-    const response = await apiClient.getTimeSeriesVariable({
+    const response = await fetchBackendVariableSeries({
       lat,
       lon,
-      start_date: startDate,
-      end_date: endDate,
+      startDate,
+      endDate,
       variable: backendVariable,
     });
 
@@ -864,7 +951,7 @@ async function fetchSeriesForSource(
   if (source === 'nasa_api') {
     const parameter = NASA_API_PARAM_MAP[variable];
     const response = await axios.get('https://power.larc.nasa.gov/api/temporal/daily/point', {
-      timeout: 60000,
+      timeout: EXTERNAL_TIMEOUT_MS,
       params: {
         start: toNasaDate(startDate),
         end: toNasaDate(endDate),
@@ -885,13 +972,13 @@ async function fetchSeriesForSource(
       .sort()
       .map((yyyymmdd) => ({
         date: `${yyyymmdd.slice(0, 4)}-${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(6, 8)}`,
-        value: toNumericOrNull(paramValues[yyyymmdd]),
+        value: roundToOneDecimal(toNumericOrNull(paramValues[yyyymmdd])),
       }));
   }
 
   if (source === 'open_meteo') {
     const response = await axios.get('https://archive-api.open-meteo.com/v1/archive', {
-      timeout: 60000,
+      timeout: EXTERNAL_TIMEOUT_MS,
       params: {
         latitude: lat,
         longitude: lon,
@@ -914,6 +1001,42 @@ async function fetchSeriesForSource(
   return [];
 }
 
+async function fetchBackendVariableSeries(params: {
+  lat: number;
+  lon: number;
+  startDate: string;
+  endDate: string;
+  variable: string;
+}) {
+  const response = await axios.post(
+    `${appConfig.api.baseUrl}/api/data/timeseries-variable`,
+    null,
+    {
+      params: {
+        lat: params.lat,
+        lon: params.lon,
+        start_date: params.startDate,
+        end_date: params.endDate,
+        variable: params.variable,
+      },
+      timeout: BACKEND_TIMEOUT_MS,
+    }
+  );
+
+  return response.data;
+}
+
+function humanizeFetchError(error: any): string {
+  if (axios.isAxiosError(error)) {
+    if (error.code === 'ECONNABORTED') {
+      return 'request timed out';
+    }
+    return error.response?.data?.detail || error.message || 'request failed';
+  }
+
+  return error?.message || 'request failed';
+}
+
 function toNumericOrNull(value: unknown): number | null {
   if (value === null || value === undefined) {
     return null;
@@ -925,4 +1048,11 @@ function toNumericOrNull(value: unknown): number | null {
   }
 
   return numeric;
+}
+
+function roundToOneDecimal(value: number | null): number | null {
+  if (value === null) {
+    return null;
+  }
+  return Math.round(value * 10) / 10;
 }
