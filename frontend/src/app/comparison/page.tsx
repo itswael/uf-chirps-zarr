@@ -924,6 +924,7 @@ async function fetchSeriesForSource(
       startDate,
       endDate,
       variable: 'RAIN',
+      source: 'chirps',
     });
 
     return response.time.map((time: string, index: number) => ({
@@ -940,6 +941,7 @@ async function fetchSeriesForSource(
       startDate,
       endDate,
       variable: backendVariable,
+      source: 'nasa_s3',
     });
 
     return response.time.map((time: string, index: number) => ({
@@ -1007,6 +1009,7 @@ async function fetchBackendVariableSeries(params: {
   startDate: string;
   endDate: string;
   variable: string;
+  source?: 'chirps' | 'nasa_s3' | 'auto';
 }) {
   const response = await axios.post(
     `${appConfig.api.baseUrl}/api/data/timeseries-variable`,
@@ -1018,6 +1021,7 @@ async function fetchBackendVariableSeries(params: {
         start_date: params.startDate,
         end_date: params.endDate,
         variable: params.variable,
+        source: params.source || 'auto',
       },
       timeout: BACKEND_TIMEOUT_MS,
     }
