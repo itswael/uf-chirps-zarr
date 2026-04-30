@@ -148,7 +148,9 @@ export default function Home() {
       
       // Calculate statistics from time series data
       const values = timeSeriesData.values || timeSeriesData.precipitation || [];
-      const numericValues = values.filter((v: any) => v !== null && !isNaN(v));
+      const numericValues = values
+        .filter((v: any) => v !== null && !isNaN(v))
+        .map((v: number) => Math.round(v * 10) / 10);
       
       if (numericValues.length > 0) {
         const sortedValues = [...numericValues].sort((a: number, b: number) => a - b);

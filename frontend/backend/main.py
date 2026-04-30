@@ -393,10 +393,10 @@ async def get_timeseries(request: DataRequest):
         # Compute values
         precip_computed = precip.compute()
         
-        # Convert to JSON-serializable format (preserve exact values)
+        # Convert to JSON-serializable format with 1-decimal precision
         time_values = [str(t) for t in precip_computed.time.values]
         precip_values = [
-            float(v) if not np.isnan(v) else None 
+            round(float(v), 1) if not np.isnan(v) else None
             for v in precip_computed.values
         ]
         
@@ -478,7 +478,7 @@ async def get_timeseries_variable(
         # Convert to JSON format
         time_values = [str(t) for t in df['time']]
         var_values = [
-            float(v) if not pd.isna(v) else None
+            round(float(v), 1) if not pd.isna(v) else None
             for v in df[variable]
         ]
         
