@@ -17,7 +17,7 @@ class Config:
     
     # ==================== Processing Settings ====================
     # Maximum points allowed in a single shapefile upload
-    MAX_SHAPEFILE_POINTS: int = int(os.getenv("MAX_SHAPEFILE_POINTS", "1000"))
+    MAX_SHAPEFILE_POINTS: int = int(os.getenv("MAX_SHAPEFILE_POINTS", "10000"))
     
     # Number of coordinates to process in each batch
     BATCH_SIZE: int = int(os.getenv("BATCH_SIZE", "50"))
@@ -36,14 +36,14 @@ class Config:
     
     # ==================== API Settings ====================
     # Request timeout for multi-point processing (seconds)
-    MULTI_POINT_TIMEOUT: int = int(os.getenv("MULTI_POINT_TIMEOUT", "300"))
+    MULTI_POINT_TIMEOUT: int = int(os.getenv("MULTI_POINT_TIMEOUT", "7200"))
     
     # CORS allowed origins
     CORS_ORIGINS = [
         "http://localhost:3000",
         "http://localhost:3001",
         "http://10.242.84.63:3000",
-        "http://10.242.84.63:3001"
+        "http://10.242.84.63:3001",
         "http://0.0.0.0:3000",
         "http://0.0.0.0:3001"
     ]
