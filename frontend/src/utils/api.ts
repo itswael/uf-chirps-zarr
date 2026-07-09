@@ -224,7 +224,7 @@ class ApiClient {
         'Content-Type': 'multipart/form-data',
       },
       responseType: 'blob',
-      timeout: 300000, // 5 minutes for large files
+      timeout: 7200000, // 2 hours for large files
     });
     
     const filename = this.getDownloadFilename(
