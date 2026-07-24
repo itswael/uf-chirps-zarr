@@ -254,6 +254,81 @@ async def root():
     }
 
 
+@app.get("/weatherx")
+async def get_weatherx(
+    latitude: float = Query(..., description="Latitude"),
+    longitude: float = Query(..., description="Longitude"),
+    start_date: str = Query(..., description="YYYY-MM-DD"),
+    end_date: str = Query(..., description="YYYY-MM-DD"),
+):
+    """Open-Meteo-compatible endpoint providing daily arrays.
+
+    - Uses CHIRPS for RAIN
+    - Uses NASA POWER for TMAX, TMIN, T2M, TDEW, WIND, SRAD
+    - DATE formatted as YYYYDDD (e.g., 2010001)
+    """
+    try:
+        ds = open_zarr()
+        merger = WeatherDataMerger(ds)
+
+        # Merge with CHIRPS as rain source; include solar + met variables
+        df = await merger.merge_weather_data(
+            lat=latitude,
+            lon=longitude,
+            start_date=start_date,
+            end_date=end_date,
+            rain_source="chirps",
+            include_solar=True,
+            include_met=True,
+        )
+
+        # Ensure chronological order and consistent length
+        df = df.sort_values("time").reset_index(drop=True)
+        dates = pd.to_datetime(df["time"], errors="coerce")
+        if dates.isna().any():
+            raise HTTPException(status_code=500, detail="Invalid time values in merged dataset")
+
+        date_strings = dates.dt.strftime("%Y%j").tolist()
+        n = len(date_strings)
+
+        # Variables expected by the consumer
+        expected_vars = [
+            "TMAX",
+            "TMIN",
+            "T2M",
+            "TDEW",
+            "WIND",
+            "RAIN",
+            "SRAD",
+        ]
+
+        daily_payload = {"DATE": date_strings}
+
+        for var in expected_vars:
+            cfg = nasa_power_config.get_variable_config(var) or {}
+            default_val = cfg.get("default_value", -99.0)
+
+            if var in df.columns:
+                series = df[var]
+                # Ensure numeric and fill missing with defaults to keep arrays aligned
+                values = [
+                    (float(v) if pd.notna(v) else float(default_val))
+                    for v in series.astype(float, errors="ignore")
+                ]
+            else:
+                values = [float(default_val)] * n
+
+            # Round to 1 decimal for consistency with other endpoints
+            daily_payload[var] = [round(v, 1) for v in values]
+
+        return {"daily": daily_payload}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in /weatherx endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/metadata")
 async def get_metadata():
     """Get metadata about the Zarr store"""
@@ -702,6 +777,7 @@ async def download_icasa_multi(
         None,
         description="Comma-separated ICASA parameters to include (e.g., RAIN,TMAX,TMIN)"
     ),
+    resolution: Optional[float] = Form(None, description="Grid step in degrees for polygon regions"),
     shapefile_shx: Optional[UploadFile] = File(None, description="Shapefile .shx companion file"),
     shapefile_dbf: Optional[UploadFile] = File(None, description="Shapefile .dbf companion file")
 ):
@@ -752,9 +828,19 @@ async def download_icasa_multi(
         )
         temp_dir = spatial_path.parent
         
+        # Validate and clamp resolution if provided (allowed: 0.5 to 2 degrees)
+        effective_resolution: Optional[float] = None
+        if resolution is not None:
+            if not (0.1 <= resolution <= 2.0):
+                raise HTTPException(status_code=400, detail="resolution must be between 0.1 and 2.0 degrees")
+            effective_resolution = float(resolution)
+
         # Extract coordinates and point IDs from file
         logger.info(f"Extracting coordinates and point IDs from: {filename}")
-        coordinates, point_ids_mapping, extraction_metadata = ShapefileProcessor.extract_coordinates_and_ids_from_file(spatial_path)
+        coordinates, point_ids_mapping, extraction_metadata = ShapefileProcessor.extract_coordinates_and_ids_from_file(
+            spatial_path,
+            resolution=effective_resolution,
+        )
         
         # Validate coordinates with IDs
         validation = ShapefileProcessor.validate_coordinates_with_ids(
@@ -907,6 +993,7 @@ async def download_icasa_multi(
 @app.post("/api/validate-shapefile")
 async def validate_shapefile(
     shapefile: UploadFile = File(..., description="Shapefile (.shp, .geojson, .json, or .zip)"),
+    resolution: Optional[float] = Form(None, description="Grid step in degrees for polygon regions"),
     shapefile_shx: Optional[UploadFile] = File(None, description="Shapefile .shx companion file"),
     shapefile_dbf: Optional[UploadFile] = File(None, description="Shapefile .dbf companion file")
 ):
@@ -944,8 +1031,18 @@ async def validate_shapefile(
         )
         temp_dir = spatial_path.parent
         
+        # Validate and clamp resolution if provided (allowed: 0.5 to 2 degrees)
+        effective_resolution: Optional[float] = None
+        if resolution is not None:
+            if not (0.1 <= resolution <= 2.0):
+                raise HTTPException(status_code=400, detail="resolution must be between 0.1 and 2.0 degrees")
+            effective_resolution = float(resolution)
+
         # Extract coordinates
-        coordinates, point_ids_mapping, _ = ShapefileProcessor.extract_coordinates_and_ids_from_file(spatial_path)
+        coordinates, point_ids_mapping, _ = ShapefileProcessor.extract_coordinates_and_ids_from_file(
+            spatial_path,
+            resolution=effective_resolution,
+        )
         
         # Validate coordinates
         validation = ShapefileProcessor.validate_coordinates(
