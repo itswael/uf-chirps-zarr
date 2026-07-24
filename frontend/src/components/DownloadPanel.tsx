@@ -74,6 +74,7 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
   const [validationInfo, setValidationInfo] = useState<any>(null);
   const [validating, setValidating] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [polygonResolution, setPolygonResolution] = useState<number>(1.0);
 
   const parameterOptions = useMemo(() => getParameterOptions(rainSource), [rainSource]);
   const selectedCount = selectedParameters.length;
@@ -172,7 +173,7 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
 
     setValidating(true);
     try {
-      const result = await apiClient.validateShapefile(primaryFile, newCompanionFiles.shx, newCompanionFiles.dbf);
+      const result = await apiClient.validateShapefile(primaryFile, newCompanionFiles.shx, newCompanionFiles.dbf, polygonResolution);
       setValidationInfo(result);
 
       if (!result.valid) {
@@ -215,6 +216,7 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
         end_date: endDate,
         rain_source: rainSource,
         selected_parameters: selectedParameters,
+        resolution: polygonResolution,
       });
       setSuccess(true);
     } catch (err: any) {
@@ -350,6 +352,9 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
                 • Supported formats: Shapefiles (.shp with .shx, .dbf), GeoJSON (.geojson, .json), or ZIP archives
               </Typography>
               <Typography variant="caption" display="block">
+                • For polygon uploads, choose a grid resolution (0.5°–2.0°) to generate interior points
+              </Typography>
+              <Typography variant="caption" display="block">
                 • System extracts all coordinates and creates one ICASA file per point
               </Typography>
               <Typography variant="caption" display="block">
@@ -406,6 +411,46 @@ export default function DownloadPanel({ location, startDate, endDate }: Download
                         Companion: {companionFiles.dbf.name}
                       </Typography>
                     )}
+                  </Box>
+
+                  <Box>
+                    <Typography variant="subtitle2" gutterBottom>Polygon Grid Resolution</Typography>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <FormControl size="small" sx={{ width: 200 }}>
+                        <InputLabel>Resolution (degrees)</InputLabel>
+                        <Select
+                          label="Resolution (degrees)"
+                          value={polygonResolution}
+                          onChange={(e) => setPolygonResolution(Number(e.target.value))}
+                        >
+                          {[0.1, 0.25, 0.5, 1.0, 1.5, 2.0].map((r) => (
+                            <MenuItem key={r} value={r}>{r}</MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={async () => {
+                          if (!selectedFile) return;
+                          setValidating(true);
+                          setValidationError(null);
+                          try {
+                            const result = await apiClient.validateShapefile(selectedFile, companionFiles.shx, companionFiles.dbf, polygonResolution);
+                            setValidationInfo(result);
+                          } catch (err: any) {
+                            setValidationError(err.response?.data?.detail || err.message || 'Failed to validate with new resolution');
+                          } finally {
+                            setValidating(false);
+                          }
+                        }}
+                      >
+                        Re-validate
+                      </Button>
+                    </Stack>
+                    <Typography variant="caption" color="text.secondary" display="block">
+                      Applies to polygon uploads; ignored for point files.
+                    </Typography>
                   </Box>
 
                   {validationInfo && (
