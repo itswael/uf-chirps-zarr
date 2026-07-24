@@ -45,7 +45,8 @@ class ShapefileProcessor:
     
     @staticmethod
     def extract_coordinates_and_ids_from_file(
-        file_path: Path
+        file_path: Path,
+        resolution: Optional[float] = None,
     ) -> Tuple[List[Tuple[float, float]], Dict[int, str], Dict[str, Any]]:
         """
         Extract coordinates and point IDs from a spatial file (shapefile or geojson).
@@ -53,6 +54,7 @@ class ShapefileProcessor:
         
         Args:
             file_path: Path to the shapefile (.shp) or geojson (.geojson, .json) file
+            resolution: Optional spatial step (in degrees) to generate interior grid points for polygons
             
         Returns:
             Tuple of (coordinates_list, id_mapping, extraction_metadata)
@@ -66,6 +68,13 @@ class ShapefileProcessor:
         try:
             # Read the file using geopandas (supports shapefiles, geojson, etc.)
             gdf = gpd.read_file(str(file_path))
+            # Ensure CRS is geographic if known (resolution is in degrees)
+            try:
+                if gdf.crs and gdf.crs.to_epsg() not in (4326, 4979):
+                    gdf = gdf.to_crs(4326)
+            except Exception:
+                # If CRS conversion fails or unknown, proceed as-is
+                pass
             logger.info(f"Loaded {len(gdf)} features from {file_path}")
             
             coordinates = []
@@ -123,10 +132,33 @@ class ShapefileProcessor:
                         feature_coords = [(coord[0], coord[1]) for line in geom.geoms for coord in line.coords]
                 
                 elif geom.geom_type in ['Polygon', 'MultiPolygon']:
-                    if geom.geom_type == 'Polygon':
-                        feature_coords = [(coord[0], coord[1]) for coord in geom.exterior.coords]
+                    # If a resolution is provided, generate grid points INSIDE the polygon(s)
+                    if resolution is not None and resolution > 0:
+                        from shapely.prepared import prep
+                        from shapely.geometry import Point
+                        import numpy as _np
+
+                        # Normalize to a unified polygon via unary_union for simplicity
+                        poly = geom
+                        # Generate bounding box grid in lon/lat
+                        minx, miny, maxx, maxy = poly.bounds
+                        xs = _np.arange(minx, maxx + resolution, resolution)
+                        ys = _np.arange(miny, maxy + resolution, resolution)
+                        prepared = prep(poly)
+
+                        gen_coords: List[Tuple[float, float]] = []
+                        for x in xs:
+                            for y in ys:
+                                p = Point(float(x), float(y))
+                                if prepared.contains(p) or poly.touches(p):
+                                    gen_coords.append((float(x), float(y)))
+                        feature_coords = gen_coords
                     else:
-                        feature_coords = [(coord[0], coord[1]) for poly in geom.geoms for coord in poly.exterior.coords]
+                        # Fall back to boundary coordinates (previous behavior)
+                        if geom.geom_type == 'Polygon':
+                            feature_coords = [(coord[0], coord[1]) for coord in geom.exterior.coords]
+                        else:
+                            feature_coords = [(coord[0], coord[1]) for poly in geom.geoms for coord in poly.exterior.coords]
                 
                 # Add extracted coordinates with their ID mapping
                 for coord in feature_coords:
@@ -155,6 +187,7 @@ class ShapefileProcessor:
                 "id_column": id_column,
                 "generated_id_indices": generated_id_indices,
                 "has_generated_ids": len(generated_id_indices) > 0,
+                "resolution": resolution,
             }
             return coordinates, id_mapping, extraction_metadata
             
