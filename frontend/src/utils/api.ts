@@ -174,7 +174,7 @@ class ApiClient {
   /**
    * Validate a shapefile before processing
    */
-  async validateShapefile(file: File, shxFile?: File, dbfFile?: File) {
+  async validateShapefile(file: File, shxFile?: File, dbfFile?: File, resolution?: number) {
     const formData = new FormData();
     formData.append('shapefile', file);
     if (shxFile) {
@@ -182,6 +182,9 @@ class ApiClient {
     }
     if (dbfFile) {
       formData.append('shapefile_dbf', dbfFile);
+    }
+    if (typeof resolution === 'number') {
+      formData.append('resolution', String(resolution));
     }
     
     const response = await this.client.post('/api/validate-shapefile', formData, {
@@ -203,6 +206,7 @@ class ApiClient {
     end_date: string;
     rain_source?: string;
     selected_parameters?: string[];
+    resolution?: number;
   }) {
     const formData = new FormData();
     formData.append('shapefile', params.file);
@@ -217,6 +221,9 @@ class ApiClient {
     formData.append('rain_source', params.rain_source || 'chirps');
     if (params.selected_parameters && params.selected_parameters.length > 0) {
       formData.append('selected_parameters', params.selected_parameters.join(','));
+    }
+    if (typeof params.resolution === 'number') {
+      formData.append('resolution', String(params.resolution));
     }
 
     const response = await this.client.post('/api/download/icasa-multi', formData, {
