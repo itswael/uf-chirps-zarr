@@ -13,7 +13,12 @@ class Config:
     # ==================== Paths ====================
     BACKEND_DIR = Path(__file__).resolve().parent
     PROJECT_ROOT = BACKEND_DIR.parent
-    ZARR_PATH = PROJECT_ROOT / "data" / "zarr" / "chirps_v3.0_daily_precip_v1.0.zarr"
+    # Allow overriding the Zarr path via environment for containerized deployments
+    _zarr_path_env = os.getenv("ZARR_PATH")
+    if _zarr_path_env and _zarr_path_env.strip():
+        ZARR_PATH = Path(_zarr_path_env).expanduser().resolve()
+    else:
+        ZARR_PATH = PROJECT_ROOT / "data" / "zarr" / "chirps_v3.0_daily_precip_v1.0.zarr"
     
     # ==================== Processing Settings ====================
     # Maximum points allowed in a single shapefile upload
