@@ -12,7 +12,7 @@ class Config:
     
     # ==================== Paths ====================
     BACKEND_DIR = Path(__file__).resolve().parent
-    PROJECT_ROOT = BACKEND_DIR.parent.parent
+    PROJECT_ROOT = BACKEND_DIR.parent
     ZARR_PATH = PROJECT_ROOT / "data" / "zarr" / "chirps_v3.0_daily_precip_v1.0.zarr"
     
     # ==================== Processing Settings ====================

@@ -26,16 +26,16 @@ import io
 from config import config
 
 # Import utility modules
-from backend.utils.shapefile_processor import ShapefileProcessor
-from backend.utils.icasa_generator import IcasaWeatherGenerator
-from backend.utils.async_processor import generate_weather_package
+from utils.shapefile_processor import ShapefileProcessor
+from utils.icasa_generator import IcasaWeatherGenerator
+from utils.async_processor import generate_weather_package
 
 # Import NASA POWER utilities
-from backend.utils.nasa_power_fetcher import get_fetcher
-from backend.utils.weather_data_merger import WeatherDataMerger
-from backend.utils.enhanced_icasa_generator import EnhancedIcasaGenerator, EnhancedIcasaBatchGenerator
-from backend.utils.nasa_power_config import nasa_power_config
-from backend.utils.point_id import generate_point_id
+from utils.nasa_power_fetcher import get_fetcher
+from utils.weather_data_merger import WeatherDataMerger
+from utils.enhanced_icasa_generator import EnhancedIcasaGenerator, EnhancedIcasaBatchGenerator
+from utils.nasa_power_config import nasa_power_config
+from utils.point_id import generate_point_id
 
 def _cleanup_old_backend_logs(log_dir: Path, retention_days: int = 90) -> None:
     """Delete backend log files older than retention_days."""
@@ -930,7 +930,7 @@ async def download_icasa_multi(
         )
         
         # Create zip file
-        from backend.utils.async_processor import ZipFileBuilder
+        from utils.async_processor import ZipFileBuilder
         
         source_desc = "CHIRPS + NASA POWER"
         if rain_source == "chirps":
