@@ -54,7 +54,7 @@ Currently running in background terminal.
 
 To restart:
 ```bash
-cd frontend/backend
+cd backend
 python main.py
 ```
 
@@ -71,10 +71,10 @@ npm start          # Production server
 ## 📁 Project Structure
 
 ```
+backend/              # FastAPI backend
+├── main.py          # API endpoints  
+└── requirements.txt # Python deps (installed ✅)
 frontend/
-├── backend/              # FastAPI backend
-│   ├── main.py          # API endpoints  
-│   └── requirements.txt # Python deps (installed ✅)
 ├── config/              # Configuration
 │   └── app.config.ts   # All customizable settings
 ├── src/
@@ -203,7 +203,7 @@ When ready for production:
 1. **Backend**:
 ```bash
 pip install gunicorn
-gunicorn frontend.backend.main:app -w 4 -k uvicorn.workers.UvicornWorker
+gunicorn backend.main:app -w 4 -k uvicorn.workers.UvicornWorker
 ```
 
 2. **Frontend**:

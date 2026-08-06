@@ -36,10 +36,10 @@ A modern, interactive web application for visualizing and downloading CHIRPS (Cl
 ## Architecture
 
 ```
+backend/              # FastAPI backend for Zarr data access
+├── main.py          # API endpoints
+└── requirements.txt # Python dependencies
 frontend/
-├── backend/              # FastAPI backend for Zarr data access
-│   ├── main.py          # API endpoints
-│   └── requirements.txt # Python dependencies
 ├── config/              # Centralized configuration
 │   ├── app.config.ts   # Application settings
 │   └── README.md       # Configuration guide

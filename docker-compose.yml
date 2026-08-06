@@ -1,0 +1,102 @@
+version: '3.9'
+
+services:
+  # Two backend instances for CPU-bound workloads; fronted by nginx
+  backend-1:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: chirps-backend:latest
+    container_name: chirps-backend-1
+    environment:
+      - LOG_LEVEL=INFO
+      - MAX_WORKERS=
+      - USE_PROCESSES=false
+      - ZARR_PATH=/data/zarr/chirps_v3.0_daily_precip_v1.0.zarr
+    volumes:
+      - ./data:/data:rw
+      - ./backend/logs:/app/backend/logs
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8g
+        reservations:
+          cpus: '2'
+          memory: 4g
+    restart: unless-stopped
+
+  backend-2:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: chirps-backend:latest
+    container_name: chirps-backend-2
+    environment:
+      - LOG_LEVEL=INFO
+      - MAX_WORKERS=
+      - USE_PROCESSES=false
+      - ZARR_PATH=/data/zarr/chirps_v3.0_daily_precip_v1.0.zarr
+    volumes:
+      - ./data:/data:rw
+      - ./backend/logs:/app/backend/logs
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8g
+        reservations:
+          cpus: '2'
+          memory: 4g
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: chirps-nginx
+    ports:
+      - "8000:80"
+    volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend-1
+      - backend-2
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: "http://10.242.84.63:8000"
+    image: chirps-frontend:latest
+    container_name: chirps-frontend
+    environment:
+      # Keep existing peer-shared URL 10.242.84.63:3000
+      - NEXT_PUBLIC_API_URL=http://10.242.84.63:8000
+      - NODE_ENV=production
+    ports:
+      - "3000:3000"
+    depends_on:
+      - nginx
+    restart: unless-stopped
+
+  ingestion:
+    build:
+      context: .
+      dockerfile: src/Dockerfile
+    image: chirps-ingestion:latest
+    container_name: chirps-ingestion
+    environment:
+      - CHIRPS_BASE_DIR=/app
+      - CHIRPS_RAW_DIR=data/raw
+      - CHIRPS_INTERIM_DIR=data/interim
+      - CHIRPS_ZARR_DIR=data/zarr
+      - CHIRPS_ZARR_STORE_NAME=chirps_v3.0_daily_precip_v1.0.zarr
+    volumes:
+      - ./data:/app/data:rw
+      - ./config:/app/config:ro
+    # Default command runs info; override with `docker compose run ingestion auto -y`
+    command: ["info"]
+    restart: "no"
+
+volumes: {}

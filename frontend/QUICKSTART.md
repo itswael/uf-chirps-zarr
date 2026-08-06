@@ -11,7 +11,7 @@ Get up and running with the CHIRPS Precipitation Viewer in minutes!
 ## Step 1: Install Backend Dependencies
 
 ```bash
-cd frontend/backend
+cd backend
 pip install -r requirements.txt
 ```
 
