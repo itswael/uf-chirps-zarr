@@ -14,6 +14,15 @@ A production-grade climate data platform for ingesting CHIRPS precipitation rast
 - **Email Notifications**: Execution summaries sent to configured recipients
 - **Scalable**: Handles TB-level data volumes with Dask
 
+## Repository Layout
+
+This repository covers the full ingestion-to-visualization pipeline:
+
+- **`src/`** — the ingestion pipeline documented below (download, preprocess, convert to Zarr, orchestrate bootstrap/incremental runs)
+- **`backend/`** — FastAPI service exposing the Zarr store and NASA POWER data over a REST API ([backend/README.md](backend/README.md))
+- **`frontend/`** — Next.js web app for interactive map-based exploration and ICASA export ([frontend/README.md](frontend/README.md))
+- **`client/`** — Python client library for programmatic access and benchmarking against the Zarr store ([client/README.md](client/README.md))
+
 ## Quick Start
 
 ### Installation
@@ -360,7 +369,8 @@ if missing:
 
 - **[Incremental Ingestion Guide](documentation/INCREMENTAL_GUIDE.md)** - Comprehensive guide for incremental updates
 - **[System Architecture](documentation/BootstrapSystemArchitecture.drawio)** - Architecture diagrams
-- **[Implementation Summary](IMPLEMENTATION_SUMMARY.md)** - Technical implementation details
+- **[Incremental Implementation Notes](INCREMENTAL_IMPLEMENTATION.md)** - Technical implementation details
+- **[Deployment Guide](DEPLOYMENT.md)** - Deployment instructions
 
 ## Testing
 
@@ -442,8 +452,4 @@ python -m src.cli auto
 
 ## License
 
-[Add your license here]
-
-## Contributors
-
-[Add contributors here]
+MIT — see [LICENSE](LICENSE).
