@@ -2,12 +2,13 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import ThemeProvider from "@/components/ThemeProvider";
+import appConfig from "@/config/app.config";
 
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "CHIRPS Precipitation Viewer",
-  description: "Interactive viewer for CHIRPS daily precipitation data",
+  title: appConfig.title,
+  description: appConfig.description,
 };
 
 export default function RootLayout({
