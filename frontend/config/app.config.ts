@@ -5,8 +5,8 @@
 
 export const appConfig = {
   // Application Info
-  title: 'CHIRPS Precipitation Viewer',
-  description: 'Interactive viewer for CHIRPS daily precipitation data',
+  title: 'Climate Tool - powered by NASA Power & CHIRPS',
+  description: 'Interactive tool for climate data download and visualization, leveraging NASA Power and CHIRPS datasets.',
   version: '1.0.0',
   
   // API Configuration
@@ -59,7 +59,7 @@ export const appConfig = {
   // Visualization Configuration
   visualization: {
     // Default aggregation level
-    defaultAggregation: 'monthly',
+    defaultAggregation: 'daily',
     
     // Available aggregation options
     aggregationLevels: [
